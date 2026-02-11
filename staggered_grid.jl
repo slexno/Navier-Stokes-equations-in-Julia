@@ -467,7 +467,9 @@ function _print_matrix(name::AbstractString, A::AbstractMatrix)
     display(A)
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
+
+    
+function demo_staggered_grid()
     # ---------------------------
     # Cas de démonstration :
     # 1) construction d'un état initial
@@ -476,8 +478,8 @@ if abspath(PROGRAM_FILE) == @__FILE__
     # 4) Poisson pression
     # 5) projection finale
     # ---------------------------
-    Nx, Ny = 4, 3
-    dx, dy = 0.5, 0.25
+    Nx, Ny = 3, 3
+    dx, dy = 0.5, 0.5
     ν = 1e-2
     ρ = 1.0
     dt = 0.05
@@ -565,3 +567,5 @@ if abspath(PROGRAM_FILE) == @__FILE__
     _print_matrix("intermediate_velocity_flux_form -> div_u", iv_flux.div_u)
     _print_matrix("intermediate_velocity_flux_form -> div_v", iv_flux.div_v)
 end
+
+demo_staggered_grid()
