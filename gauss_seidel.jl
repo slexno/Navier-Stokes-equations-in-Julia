@@ -1,4 +1,9 @@
 # Gauss-Seidel Method Implementation in Julia
+using SparseArrays
+
+
+
+
 x0 =  zeros(3) 
 
 itermax = 1000
@@ -25,8 +30,6 @@ end
 nx = 3
 ny = 3
 h=1
-
-using SparseArrays
 
 
 dirichlet = Dict{Tuple{Int,Int},Float64}()
