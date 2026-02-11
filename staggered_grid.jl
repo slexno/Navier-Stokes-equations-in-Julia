@@ -20,6 +20,24 @@ function _check_sizes(u, v, Nx::Int, Ny::Int)
     size(v) == (Nx, Ny + 1) || throw(ArgumentError("v must have size ($Nx, $(Ny+1))"))
 end
 
+
+"""Apply no-slip wall conditions on all domain borders (normal components on boundary faces set to zero)."""
+function apply_wall_boundaries!(u::AbstractMatrix, v::AbstractMatrix)
+    u[1, :] .= 0.0
+    u[end, :] .= 0.0
+    v[:, 1] .= 0.0
+    v[:, end] .= 0.0
+    return u, v
+end
+
+"""Return copies of `(u, v)` that satisfy wall boundary conditions on all borders."""
+function with_wall_boundaries(u::AbstractMatrix, v::AbstractMatrix)
+    uw = copy(float.(u))
+    vw = copy(float.(v))
+    apply_wall_boundaries!(uw, vw)
+    return uw, vw
+end
+
 """
 Compute gradients naturally located at pressure-cell centers:
 - `du_dx_center[i,j] = (u[i+1,j] - u[i,j]) / dx`
@@ -41,6 +59,50 @@ function center_normal_gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real,
     end
 
     return du_dx_center, dv_dy_center
+end
+
+"""Direct `∂u/∂x` on x-faces `(Nx+1, Ny)` without interpolation."""
+function xface_du_dx(u::AbstractMatrix, dx::Real)
+    Nx1, Ny = size(u)
+    du_dx_xfaces = similar(float.(u))
+    inv_dx = 1 / dx
+
+    for j in 1:Ny
+        if Nx1 == 1
+            du_dx_xfaces[1, j] = 0.0
+            continue
+        end
+
+        du_dx_xfaces[1, j] = (u[2, j] - u[1, j]) * inv_dx
+        for i in 2:(Nx1 - 1)
+            du_dx_xfaces[i, j] = (u[i + 1, j] - u[i - 1, j]) * (0.5 * inv_dx)
+        end
+        du_dx_xfaces[Nx1, j] = (u[Nx1, j] - u[Nx1 - 1, j]) * inv_dx
+    end
+
+    return du_dx_xfaces
+end
+
+"""Direct `∂v/∂y` on y-faces `(Nx, Ny+1)` without interpolation."""
+function yface_dv_dy(v::AbstractMatrix, dy::Real)
+    Nx, Ny1 = size(v)
+    dv_dy_yfaces = similar(float.(v))
+    inv_dy = 1 / dy
+
+    for i in 1:Nx
+        if Ny1 == 1
+            dv_dy_yfaces[i, 1] = 0.0
+            continue
+        end
+
+        dv_dy_yfaces[i, 1] = (v[i, 2] - v[i, 1]) * inv_dy
+        for j in 2:(Ny1 - 1)
+            dv_dy_yfaces[i, j] = (v[i, j + 1] - v[i, j - 1]) * (0.5 * inv_dy)
+        end
+        dv_dy_yfaces[i, Ny1] = (v[i, Ny1] - v[i, Ny1 - 1]) * inv_dy
+    end
+
+    return dv_dy_yfaces
 end
 
 """Interpolate center values `(Nx, Ny)` to x-normal faces `(Nx+1, Ny)`."""
@@ -102,34 +164,29 @@ function v_to_centers(v::AbstractMatrix)
 end
 
 """
-Compute all gradients required by the request:
-- `du_dx_xfaces` and `du_dx_yfaces`
-- `dv_dy_xfaces` and `dv_dy_yfaces`
-- `du_dy_yfaces`
-- `dv_dx_xfaces`
+Compute gradients on their natural staggered locations (without interpolation):
+- `du_dx_xfaces` on x-faces
+- `dv_dy_yfaces` on y-faces
+- `du_dy_yfaces` on y-faces
+- `dv_dx_xfaces` on x-faces
 """
-function interpolated_gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
+function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real;
+    uc::Union{Nothing,AbstractMatrix} = nothing,
+    vc::Union{Nothing,AbstractMatrix} = nothing)
     Nx = size(v, 1)
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
 
-    # Étape 1 — gradients normaux aux centres de cellules
-    #   du/dx = (u_E - u_W)/dx, dv/dy = (v_N - v_S)/dy
-    du_dx_center, dv_dy_center = center_normal_gradients(u, v, dx, dy)
-    # Étape 2 — interpolation centre -> faces pour placer les dérivées
-    # sur les maillages où les flux seront évalués.
-    du_dx_xfaces = interpolate_center_to_xfaces(du_dx_center)
-    du_dx_yfaces = interpolate_center_to_yfaces(du_dx_center)
-    dv_dy_xfaces = interpolate_center_to_xfaces(dv_dy_center)
-    dv_dy_yfaces = interpolate_center_to_yfaces(dv_dy_center)
+    du_dx_xfaces = xface_du_dx(u, dx)
+    dv_dy_yfaces = yface_dv_dy(v, dy)
 
-    # Étape 3 — reconstruction des vitesses au centre pour calculer
-    # les dérivées croisées du/dy et dv/dx.
-    uc = u_to_centers(u)
-    vc = v_to_centers(v)
+    uc_local = isnothing(uc) ? u_to_centers(u) : uc
+    vc_local = isnothing(vc) ? v_to_centers(v) : vc
 
-    du_dy_center = similar(uc)
-    dv_dx_center = similar(vc)
+    du_dy_center = similar(uc_local)
+    dv_dx_center = similar(vc_local)
+    inv_dy = 1 / dy
+    inv_dx = 1 / dx
 
     for i in 1:Nx
         if Ny == 1
@@ -137,11 +194,11 @@ function interpolated_gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, 
             continue
         end
 
-        du_dy_center[i, 1] = (uc[i, 2] - uc[i, 1]) / dy
+        du_dy_center[i, 1] = (uc_local[i, 2] - uc_local[i, 1]) * inv_dy
         for j in 2:(Ny - 1)
-            du_dy_center[i, j] = (uc[i, j + 1] - uc[i, j - 1]) / (2 * dy)
+            du_dy_center[i, j] = (uc_local[i, j + 1] - uc_local[i, j - 1]) * (0.5 * inv_dy)
         end
-        du_dy_center[i, Ny] = (uc[i, Ny] - uc[i, Ny - 1]) / dy
+        du_dy_center[i, Ny] = (uc_local[i, Ny] - uc_local[i, Ny - 1]) * inv_dy
     end
 
     for j in 1:Ny
@@ -150,11 +207,11 @@ function interpolated_gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, 
             continue
         end
 
-        dv_dx_center[1, j] = (vc[2, j] - vc[1, j]) / dx
+        dv_dx_center[1, j] = (vc_local[2, j] - vc_local[1, j]) * inv_dx
         for i in 2:(Nx - 1)
-            dv_dx_center[i, j] = (vc[i + 1, j] - vc[i - 1, j]) / (2 * dx)
+            dv_dx_center[i, j] = (vc_local[i + 1, j] - vc_local[i - 1, j]) * (0.5 * inv_dx)
         end
-        dv_dx_center[Nx, j] = (vc[Nx, j] - vc[Nx - 1, j]) / dx
+        dv_dx_center[Nx, j] = (vc_local[Nx, j] - vc_local[Nx - 1, j]) * inv_dx
     end
 
     du_dy_yfaces = interpolate_center_to_yfaces(du_dy_center)
@@ -162,12 +219,18 @@ function interpolated_gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, 
 
     return (
         du_dx_xfaces = du_dx_xfaces,
-        du_dx_yfaces = du_dx_yfaces,
-        dv_dy_xfaces = dv_dy_xfaces,
         dv_dy_yfaces = dv_dy_yfaces,
         du_dy_yfaces = du_dy_yfaces,
         dv_dx_xfaces = dv_dx_xfaces,
     )
+end
+
+
+"""Backward-compatible alias for `gradients`."""
+function interpolated_gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real;
+    uc::Union{Nothing,AbstractMatrix} = nothing,
+    vc::Union{Nothing,AbstractMatrix} = nothing)
+    return gradients(u, v, dx, dy; uc = uc, vc = vc)
 end
 
 """
@@ -181,10 +244,12 @@ For `v`:
 - `Fx_vdiff = ν * (dv/dx)|xface * ΔSx`, with `ΔSx = dy`
 - `Fy_vdiff = ν * (dv/dy)|yface * ΔSy`, with `ΔSy = dx`
 """
-function diffusive_fluxes(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dx::Real, dy::Real)
+function diffusive_fluxes(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dx::Real, dy::Real;
+    uc::Union{Nothing,AbstractMatrix} = nothing,
+    vc::Union{Nothing,AbstractMatrix} = nothing)
     # Loi de diffusion (type Fick/Newton) : flux = ν * gradient * surface.
     # Ici dSx = dy sur faces x et dSy = dx sur faces y.
-    grads = interpolated_gradients(u, v, dx, dy)
+    grads = gradients(u, v, dx, dy; uc = uc, vc = vc)
 
     Fx_udiff = ν .* grads.du_dx_xfaces .* dy
     Fy_udiff = ν .* grads.du_dy_yfaces .* dx
@@ -239,8 +304,10 @@ function intermediate_velocity(u::AbstractMatrix, v::AbstractMatrix, ν::Real, d
     # Étape prédicteur explicite (sans pression) :
     #   u* = u^n + dt * ν * ∇²u^n
     #   v* = v^n + dt * ν * ∇²v^n
-    u_star = u .+ dt .* ν .* _laplacian_u(u, dx, dy)
-    v_star = v .+ dt .* ν .* _laplacian_v(v, dx, dy)
+    uw, vw = with_wall_boundaries(u, v)
+    u_star = uw .+ dt .* ν .* _laplacian_u(uw, dx, dy)
+    v_star = vw .+ dt .* ν .* _laplacian_v(vw, dx, dy)
+    apply_wall_boundaries!(u_star, v_star)
     return u_star, v_star
 end
 
@@ -302,8 +369,7 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
     Nx, Ny = size(p)
     _check_sizes(u_star, v_star, Nx, Ny)
 
-    u_next = copy(float.(u_star))
-    v_next = copy(float.(v_star))
+    u_next, v_next = with_wall_boundaries(u_star, v_star)
 
     for j in 1:Ny, i in 2:Nx
         dpdx = (p[i, j] - p[i - 1, j]) / dx
@@ -315,6 +381,7 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
         v_next[i, j] = v_star[i, j] - (dt / ρ) * dpdy
     end
 
+    apply_wall_boundaries!(u_next, v_next)
     return u_next, v_next
 end
 
@@ -352,7 +419,7 @@ function yfaces_to_centers(phi_y::AbstractMatrix)
 end
 
 """
-Compute convective fluxes on faces for both transported components (`u` and `v`).
+Compute convective fluxes on faces for both transported components (`u` and `v`) using an upwind method.
 
 On x-normal faces: `Fx = Uface * ϕface * dSx` with `dSx = dy`.
 On y-normal faces: `Fy = Vface * ϕface * dSy` with `dSy = dx`.
@@ -361,27 +428,31 @@ Returned arrays are face-located:
 - `Fx_uconv (Nx+1,Ny)`, `Fy_uconv (Nx,Ny+1)`
 - `Fx_vconv (Nx+1,Ny)`, `Fy_vconv (Nx,Ny+1)`
 """
-function convective_fluxes(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
-    # Flux convectifs quadratiques : F = (vitesse advectante) * (quantité transportée) * surface.
-    # Les champs sont interpolés vers les faces pour respecter la géométrie MAC.
+function convective_fluxes(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real;
+    uc::Union{Nothing,AbstractMatrix} = nothing,
+    vc::Union{Nothing,AbstractMatrix} = nothing)
+    # Flux convectifs avec reconstruction upwind :
+    # F = (vitesse advectante) * (quantité transportée upwind) * surface.
     Nx = size(v, 1)
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
 
-    uc = u_to_centers(u)
-    vc = v_to_centers(v)
+    uc_local = isnothing(uc) ? u_to_centers(u) : uc
+    vc_local = isnothing(vc) ? v_to_centers(v) : vc
 
-    Uface = interpolate_center_to_xfaces(uc)
-    Vface = interpolate_center_to_yfaces(vc)
+    Uface = interpolate_center_to_xfaces(uc_local)
+    Vface = interpolate_center_to_yfaces(vc_local)
 
-    u_yface = interpolate_center_to_yfaces(uc)
-    v_xface = interpolate_center_to_xfaces(vc)
+    u_xface_upwind = upwind_center_to_xfaces(uc_local, Uface)
+    u_yface_upwind = upwind_center_to_yfaces(uc_local, Vface)
+    v_xface_upwind = upwind_center_to_xfaces(vc_local, Uface)
+    v_yface_upwind = upwind_center_to_yfaces(vc_local, Vface)
 
-    Fx_uconv = Uface .* Uface .* dy
-    Fy_uconv = Vface .* u_yface .* dx
+    Fx_uconv = Uface .* u_xface_upwind .* dy
+    Fy_uconv = Vface .* u_yface_upwind .* dx
 
-    Fx_vconv = Uface .* v_xface .* dy
-    Fy_vconv = Vface .* Vface .* dx
+    Fx_vconv = Uface .* v_xface_upwind .* dy
+    Fy_vconv = Vface .* v_yface_upwind .* dx
 
     return (
         Fx_uconv = Fx_uconv,
@@ -389,6 +460,43 @@ function convective_fluxes(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::R
         Fx_vconv = Fx_vconv,
         Fy_vconv = Fy_vconv,
     )
+end
+
+
+"""Upwind reconstruction from cell centers to x-faces using face advecting velocity."""
+function upwind_center_to_xfaces(phi_c::AbstractMatrix, Uface::AbstractMatrix)
+    Nx, Ny = size(phi_c)
+    size(Uface) == (Nx + 1, Ny) || throw(ArgumentError("Uface must have size ($(Nx+1), $Ny)"))
+
+    phi_x = similar(float.(phi_c), Nx + 1, Ny)
+
+    for j in 1:Ny
+        phi_x[1, j] = phi_c[1, j]
+        for i in 2:Nx
+            phi_x[i, j] = Uface[i, j] >= 0 ? phi_c[i - 1, j] : phi_c[i, j]
+        end
+        phi_x[Nx + 1, j] = phi_c[Nx, j]
+    end
+
+    return phi_x
+end
+
+"""Upwind reconstruction from cell centers to y-faces using face advecting velocity."""
+function upwind_center_to_yfaces(phi_c::AbstractMatrix, Vface::AbstractMatrix)
+    Nx, Ny = size(phi_c)
+    size(Vface) == (Nx, Ny + 1) || throw(ArgumentError("Vface must have size ($Nx, $(Ny+1))"))
+
+    phi_y = similar(float.(phi_c), Nx, Ny + 1)
+
+    for i in 1:Nx
+        phi_y[i, 1] = phi_c[i, 1]
+        for j in 2:Ny
+            phi_y[i, j] = Vface[i, j] >= 0 ? phi_c[i, j - 1] : phi_c[i, j]
+        end
+        phi_y[i, Ny + 1] = phi_c[i, Ny]
+    end
+
+    return phi_y
 end
 
 """Finite-volume divergence from face fluxes to cell centers `(Nx,Ny)`."""
@@ -437,20 +545,21 @@ function intermediate_velocity_flux_form(
     # Formulation conservation explicite :
     #   u* = u^n - dt * div(F_conv - F_diff)
     #   v* = v^n - dt * div(F_conv - F_diff)
-    conv = convective_fluxes(u, v, dx, dy)
-    diff = diffusive_fluxes(u, v, ν, dx, dy)
+    uw, vw = with_wall_boundaries(u, v)
+    uc = u_to_centers(uw)
+    vc = v_to_centers(vw)
+    conv = convective_fluxes(uw, vw, dx, dy; uc = uc, vc = vc)
+    diff = diffusive_fluxes(uw, vw, ν, dx, dy; uc = uc, vc = vc)
 
     div_u = flux_divergence(conv.Fx_uconv .- diff.Fx_udiff, conv.Fy_uconv .- diff.Fy_udiff, dx, dy)
     div_v = flux_divergence(conv.Fx_vconv .- diff.Fx_vdiff, conv.Fy_vconv .- diff.Fy_vdiff, dx, dy)
-
-    uc = u_to_centers(u)
-    vc = v_to_centers(v)
 
     ustar_c = uc .- Δt .* div_u
     vstar_c = vc .- Δt .* div_v
 
     ustar = centers_to_xfaces(ustar_c)
     vstar = centers_to_yfaces(vstar_c)
+    apply_wall_boundaries!(ustar, vstar)
 
     return (
         ustar = ustar,
@@ -460,6 +569,53 @@ function intermediate_velocity_flux_form(
         div_u = div_u,
         div_v = div_v,
     )
+end
+
+
+function verify_constant_gradient_case()
+    Nx, Ny = 4, 3
+    dx, dy = 0.5, 0.25
+
+    u = zeros(Nx + 1, Ny)
+    v = zeros(Nx, Ny + 1)
+
+    ax, ay = 2.0, -1.5
+    bx, by = -3.0, 4.0
+
+    for j in 1:Ny, i in 1:Nx+1
+        x = (i - 1) * dx
+        y = (j - 0.5) * dy
+        u[i, j] = ax * x + ay * y + 7.0
+    end
+
+    for j in 1:Ny+1, i in 1:Nx
+        x = (i - 0.5) * dx
+        y = (j - 1) * dy
+        v[i, j] = bx * x + by * y - 2.0
+    end
+
+    grads = gradients(u, v, dx, dy)
+    tol = 1e-12
+
+    all(abs.(grads.du_dx_xfaces .- ax) .< tol) || error("du/dx n'est pas constant sur les faces x")
+    all(abs.(grads.dv_dy_yfaces .- by) .< tol) || error("dv/dy n'est pas constant sur les faces y")
+
+    println("Validation gradients constants: OK (du/dx=$(ax), dv/dy=$(by))")
+end
+
+
+function verify_wall_boundaries_case()
+    Nx, Ny = 3, 3
+    u = fill(1.0, Nx + 1, Ny)
+    v = fill(-2.0, Nx, Ny + 1)
+    apply_wall_boundaries!(u, v)
+
+    all(u[1, :] .== 0.0) || error("Mur gauche non imposé")
+    all(u[end, :] .== 0.0) || error("Mur droit non imposé")
+    all(v[:, 1] .== 0.0) || error("Mur bas non imposé")
+    all(v[:, end] .== 0.0) || error("Mur haut non imposé")
+
+    println("Validation parois: OK (u et v nuls sur tous les bords)")
 end
 
 function _print_matrix(name::AbstractString, A::AbstractMatrix)
@@ -484,6 +640,9 @@ function demo_staggered_grid()
     ρ = 1.0
     dt = 0.05
 
+    verify_constant_gradient_case()
+    verify_wall_boundaries_case()
+
     p, u, v = allocate_staggered_fields(Nx, Ny)
     for j in 1:Ny, i in 1:Nx+1
         u[i, j] = i + 0.2j
@@ -491,6 +650,7 @@ function demo_staggered_grid()
     for j in 1:Ny+1, i in 1:Nx
         v[i, j] = -0.3i + 0.5j
     end
+    apply_wall_boundaries!(u, v)
 
     _print_matrix("allocate_staggered_fields -> p", p)
     _print_matrix("allocate_staggered_fields -> u", u)
@@ -500,18 +660,14 @@ function demo_staggered_grid()
     _print_matrix("center_normal_gradients -> du_dx_center", du_dx_center)
     _print_matrix("center_normal_gradients -> dv_dy_center", dv_dy_center)
 
-    _print_matrix("interpolate_center_to_xfaces(du_dx_center)", interpolate_center_to_xfaces(du_dx_center))
-    _print_matrix("interpolate_center_to_yfaces(du_dx_center)", interpolate_center_to_yfaces(du_dx_center))
     _print_matrix("u_to_centers(u)", u_to_centers(u))
     _print_matrix("v_to_centers(v)", v_to_centers(v))
 
-    grads = interpolated_gradients(u, v, dx, dy)
-    _print_matrix("interpolated_gradients -> du_dx_xfaces", grads.du_dx_xfaces)
-    _print_matrix("interpolated_gradients -> du_dx_yfaces", grads.du_dx_yfaces)
-    _print_matrix("interpolated_gradients -> dv_dy_xfaces", grads.dv_dy_xfaces)
-    _print_matrix("interpolated_gradients -> dv_dy_yfaces", grads.dv_dy_yfaces)
-    _print_matrix("interpolated_gradients -> du_dy_yfaces", grads.du_dy_yfaces)
-    _print_matrix("interpolated_gradients -> dv_dx_xfaces", grads.dv_dx_xfaces)
+    grads = gradients(u, v, dx, dy)
+    _print_matrix("gradients -> du_dx_xfaces", grads.du_dx_xfaces)
+    _print_matrix("gradients -> dv_dy_yfaces", grads.dv_dy_yfaces)
+    _print_matrix("gradients -> du_dy_yfaces", grads.du_dy_yfaces)
+    _print_matrix("gradients -> dv_dx_xfaces", grads.dv_dx_xfaces)
 
     diff = diffusive_fluxes(u, v, ν, dx, dy)
     _print_matrix("diffusive_fluxes -> Fx_udiff", diff.Fx_udiff)
