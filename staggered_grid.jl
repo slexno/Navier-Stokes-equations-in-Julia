@@ -192,10 +192,121 @@ function diffusive_fluxes(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dx::Re
     )
 end
 
+"""Discrete Laplacian of face-centered `u` using nearest-neighbor boundary values."""
+function _laplacian_u(u::AbstractMatrix, dx::Real, dy::Real)
+    Nx1, Ny = size(u)
+    lap_u = similar(float.(u))
+
+    for j in 1:Ny, i in 1:Nx1
+        u_w = u[max(i - 1, 1), j]
+        u_e = u[min(i + 1, Nx1), j]
+        u_s = u[i, max(j - 1, 1)]
+        u_n = u[i, min(j + 1, Ny)]
+
+        lap_u[i, j] = (u_e - 2u[i, j] + u_w) / dx^2 + (u_n - 2u[i, j] + u_s) / dy^2
+    end
+
+    return lap_u
+end
+
+"""Discrete Laplacian of face-centered `v` using nearest-neighbor boundary values."""
+function _laplacian_v(v::AbstractMatrix, dx::Real, dy::Real)
+    Nx, Ny1 = size(v)
+    lap_v = similar(float.(v))
+
+    for j in 1:Ny1, i in 1:Nx
+        v_w = v[max(i - 1, 1), j]
+        v_e = v[min(i + 1, Nx), j]
+        v_s = v[i, max(j - 1, 1)]
+        v_n = v[i, min(j + 1, Ny1)]
+
+        lap_v[i, j] = (v_e - 2v[i, j] + v_w) / dx^2 + (v_n - 2v[i, j] + v_s) / dy^2
+    end
+
+    return lap_v
+end
+
+"""Intermediate velocity (predictor): `u* = u + Δt ν ∇²u`, `v* = v + Δt ν ∇²v`."""
+function intermediate_velocity(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dt::Real, dx::Real, dy::Real)
+    u_star = u .+ dt .* ν .* _laplacian_u(u, dx, dy)
+    v_star = v .+ dt .* ν .* _laplacian_v(v, dx, dy)
+    return u_star, v_star
+end
+
+"""Cell-centered divergence: `∂u/∂x + ∂v/∂y` from staggered velocities."""
+function divergence_center(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
+    du_dx, dv_dy = center_normal_gradients(u, v, dx, dy)
+    return du_dx .+ dv_dy
+end
+
+"""
+Solve pressure Poisson equation:
+`∇²pⁿ⁺¹ = (ρ/Δt) (∂u*/∂x + ∂v*/∂y)`
+with homogeneous Neumann boundaries and pressure gauge `p[1,1] = 0`.
+"""
+function solve_pressure_poisson(rhs::AbstractMatrix, dx::Real, dy::Real;
+    maxiter::Int = 2000, tol::Real = 1e-8)
+    Nx, Ny = size(rhs)
+    p = zeros(float(eltype(rhs)), Nx, Ny)
+    idx2 = 1 / dx^2
+    idy2 = 1 / dy^2
+
+    for _ in 1:maxiter
+        max_change = 0.0
+
+        for j in 1:Ny, i in 1:Nx
+            if i == 1 && j == 1
+                continue # pressure gauge
+            end
+
+            p_w = p[max(i - 1, 1), j]
+            p_e = p[min(i + 1, Nx), j]
+            p_s = p[i, max(j - 1, 1)]
+            p_n = p[i, min(j + 1, Ny)]
+
+            p_new = ((p_w + p_e) * idx2 + (p_s + p_n) * idy2 - rhs[i, j]) / (2idx2 + 2idy2)
+            max_change = max(max_change, abs(p_new - p[i, j]))
+            p[i, j] = p_new
+        end
+
+        max_change < tol && break
+    end
+
+    return p
+end
+
+"""
+Projection step:
+`(uⁿ⁺¹ - u*)/Δt = -(1/ρ) ∂pⁿ⁺¹/∂x`,
+`(vⁿ⁺¹ - v*)/Δt = -(1/ρ) ∂pⁿ⁺¹/∂y`.
+"""
+function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::AbstractMatrix,
+    ρ::Real, dt::Real, dx::Real, dy::Real)
+    Nx, Ny = size(p)
+    _check_sizes(u_star, v_star, Nx, Ny)
+
+    u_next = copy(float.(u_star))
+    v_next = copy(float.(v_star))
+
+    for j in 1:Ny, i in 2:Nx
+        dpdx = (p[i, j] - p[i - 1, j]) / dx
+        u_next[i, j] = u_star[i, j] - (dt / ρ) * dpdx
+    end
+
+    for j in 2:Ny, i in 1:Nx
+        dpdy = (p[i, j] - p[i, j - 1]) / dy
+        v_next[i, j] = v_star[i, j] - (dt / ρ) * dpdy
+    end
+
+    return u_next, v_next
+end
+
 if abspath(PROGRAM_FILE) == @__FILE__
     Nx, Ny = 4, 3
     dx, dy = 0.5, 0.25
     ν = 1e-2
+    ρ = 1.0
+    dt = 0.05
 
     _, u, v = allocate_staggered_fields(Nx, Ny)
 
@@ -207,6 +318,23 @@ if abspath(PROGRAM_FILE) == @__FILE__
     end
 
     fluxes = diffusive_fluxes(u, v, ν, dx, dy)
+    println("Diffusive fluxes:")
+    @show fluxes.Fx_udiff fluxes.Fy_udiff
+    @show fluxes.Fx_vdiff fluxes.Fy_vdiff
+
+    u_star, v_star = intermediate_velocity(u, v, ν, dt, dx, dy)
+    println("\nIntermediate velocity (u*, v*):")
+    @show u_star v_star
+
+    rhs = (ρ / dt) .* divergence_center(u_star, v_star, dx, dy)
+    p_next = solve_pressure_poisson(rhs, dx, dy)
+    u_next, v_next = projection_step(u_star, v_star, p_next, ρ, dt, dx, dy)
+
+    println("\nPressure from Poisson equation:")
+    @show p_next
+    println("\nProjected velocity (uⁿ⁺¹, vⁿ⁺¹):")
+    @show u_next v_next
+
     @show size(fluxes.Fx_udiff) size(fluxes.Fy_udiff)
     @show size(fluxes.Fx_vdiff) size(fluxes.Fy_vdiff)
 end
