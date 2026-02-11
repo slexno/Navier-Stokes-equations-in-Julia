@@ -20,11 +20,11 @@ v = zeros(N_y + 1, N_x)
 # Maintenant, on va interpoler les vitesses aux faces. 
 ####################################################################################################################
 
-# Interpolation de u
+# Interpolation u
 u_face_y = zeros(N_y + 1, N_x + 1)
 u_face_y[2:end-1, :] = 0.5 * (u[2:end, :] + u[1:end-1, :])  # Moyenne entre u[j] et u[j-1]
  
-# Interpolation de v
+# Interpolation v
 v_face_x = zeros(N_y + 1, N_x + 1)
 v_face_x[:, 2:end-1] = 0.5 * (v[:, 2:end] + v[:, 1:end-1])  # Moyenne entre v[i] et v[i-1]
 
@@ -32,14 +32,22 @@ v_face_x[:, 2:end-1] = 0.5 * (v[:, 2:end] + v[:, 1:end-1])  # Moyenne entre v[i]
 # Maintenant, on calcule ∂u/∂x et ∂v/∂y aux faces.
 ####################################################################################################################
 
-# Espacement de la grille
+# Espacement grille
 Dx = L_x / N_x
 Dy = L_y / N_y
 
-# Calcul de ∂u/∂x au centre des cellules de pression
+# ∂u/∂x 
 dudx = zeros(N_y, N_x)
-dudx[:, :] = (u[:, 2:end] - u[:, 1:end-1]) / Dx  # Différence centrée
+dudx[:, :] = (u[:, 2:end] - u[:, 1:end-1]) / Dx
 
-# Calcul de ∂v/∂y au centre des cellules de pression
+# ∂u/∂y
+dudy = zeros(N_y + 1, N_x + 1)
+dudy[2:end-1, :] = (u[2:end, :] - u[1:end-1, :]) / Dy
+
+# ∂v/∂x
+dvdx = zeros(N_y + 1, N_x + 1)
+dvdx[:, 2:end-1] = (v[:, 2:end] - v[:, 1:end-1]) / Dx
+
+# ∂v/∂y
 dvdy = zeros(N_y, N_x)
-dvdy[:, :] = (v[2:end, :] - v[1:end-1, :]) / Dy  # Différence centrée
+dvdy[:, :] = (v[2:end, :] - v[1:end-1, :]) / Dy
