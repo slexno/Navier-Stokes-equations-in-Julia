@@ -173,6 +173,11 @@ Compute gradients on their natural staggered locations (without interpolation):
 function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real;
     uc::Union{Nothing,AbstractMatrix} = nothing,
     vc::Union{Nothing,AbstractMatrix} = nothing)
+    # Principe général (grille MAC):
+    # - u vit sur faces normales x  -> du/dx est naturellement défini sur ces mêmes faces.
+    # - v vit sur faces normales y  -> dv/dy est naturellement défini sur ces mêmes faces.
+    # - Les dérivées croisées (du/dy et dv/dx) sont évaluées d'abord au centre cellule,
+    #   puis projetées sur leurs faces de flux (y-faces pour du/dy, x-faces pour dv/dx).
     Nx = size(v, 1)
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
@@ -605,7 +610,7 @@ end
 
 
 function verify_wall_boundaries_case()
-    Nx, Ny = 3, 3
+    Nx, Ny = 10, 10
     u = fill(1.0, Nx + 1, Ny)
     v = fill(-2.0, Nx, Ny + 1)
     apply_wall_boundaries!(u, v)
@@ -616,6 +621,50 @@ function verify_wall_boundaries_case()
     all(v[:, end] .== 0.0) || error("Mur haut non imposé")
 
     println("Validation parois: OK (u et v nuls sur tous les bords)")
+end
+
+
+"""Plot the staggered mesh (p-centers, u-faces, v-faces) if `Plots.jl` is available."""
+function plot_staggered_mesh(p::AbstractMatrix, u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real;
+    filename::AbstractString = "staggered_mesh.png")
+    Nx, Ny = size(p)
+    _check_sizes(u, v, Nx, Ny)
+
+    pkg_path = Base.find_package("Plots")
+    if isnothing(pkg_path)
+        println("Plots.jl non disponible, génération du graphique de maille ignorée.")
+        return nothing
+    end
+
+    @eval import Plots
+
+    x_p = [(i - 0.5) * dx for i in 1:Nx, j in 1:Ny]
+    y_p = [(j - 0.5) * dy for i in 1:Nx, j in 1:Ny]
+
+    x_u = [(i - 1.0) * dx for i in 1:(Nx + 1), j in 1:Ny]
+    y_u = [(j - 0.5) * dy for i in 1:(Nx + 1), j in 1:Ny]
+
+    x_v = [(i - 0.5) * dx for i in 1:Nx, j in 1:(Ny + 1)]
+    y_v = [(j - 1.0) * dy for i in 1:Nx, j in 1:(Ny + 1)]
+
+    fig = Plots.scatter(
+        vec(x_p), vec(y_p);
+        markersize = 3,
+        markerstrokewidth = 0,
+        label = "p (centres)",
+        legend = :topright,
+        xlabel = "x",
+        ylabel = "y",
+        title = "Maille MAC (staggered)",
+        aspect_ratio = :equal,
+    )
+
+    Plots.scatter!(fig, vec(x_u), vec(y_u); markersize = 2, markerstrokewidth = 0, label = "u (faces x)")
+    Plots.scatter!(fig, vec(x_v), vec(y_v); markersize = 2, markerstrokewidth = 0, label = "v (faces y)")
+
+    Plots.savefig(fig, filename)
+    println("Graphique de maille sauvegardé dans: " * filename)
+    return filename
 end
 
 function _print_matrix(name::AbstractString, A::AbstractMatrix)
@@ -634,7 +683,7 @@ function demo_staggered_grid()
     # 4) Poisson pression
     # 5) projection finale
     # ---------------------------
-    Nx, Ny = 3, 3
+    Nx, Ny = 10, 10
     dx, dy = 0.5, 0.5
     ν = 1e-2
     ρ = 1.0
@@ -651,6 +700,7 @@ function demo_staggered_grid()
         v[i, j] = -0.3i + 0.5j
     end
     apply_wall_boundaries!(u, v)
+    plot_staggered_mesh(p, u, v, dx, dy)
 
     _print_matrix("allocate_staggered_fields -> p", p)
     _print_matrix("allocate_staggered_fields -> u", u)
