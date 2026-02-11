@@ -297,13 +297,13 @@ function flux_divergence(Fx::AbstractMatrix, Fy::AbstractMatrix, dx::Real, dy::R
 end
 
 """Map cell-centered field `(Nx,Ny)` to x-faces `(Nx+1,Ny)` with edge copy."""
-function centers_to_xfaces(ϕc::AbstractMatrix)
-    return interpolate_center_to_xfaces(ϕc)
+function centers_to_xfaces(phi_c::AbstractMatrix)
+    return interpolate_center_to_xfaces(phi_c)
 end
 
 """Map cell-centered field `(Nx,Ny)` to y-faces `(Nx,Ny+1)` with edge copy."""
-function centers_to_yfaces(ϕc::AbstractMatrix)
-    return interpolate_center_to_yfaces(ϕc)
+function centers_to_yfaces(phi_c::AbstractMatrix)
+    return interpolate_center_to_yfaces(phi_c)
 end
 
 """
