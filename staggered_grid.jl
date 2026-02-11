@@ -8,12 +8,14 @@ Grid arrangement:
 """
 
 """Create zero-initialized staggered fields `(p, u, v)`."""
-function allocate_staggered_fields(Nx::Int, Ny::Int)
-    p = zeros(Nx, Ny)
-    u = zeros(Nx + 1, Ny)
-    v = zeros(Nx, Ny + 1)
-    return p, u, v
-end
+
+Nx, Ny = 3, 3
+
+
+p = zeros(Nx, Ny)
+u = zeros(Nx + 1, Ny)
+v = zeros(Nx, Ny + 1)
+
 
 function _check_sizes(u, v, Nx::Int, Ny::Int)
     size(u) == (Nx + 1, Ny) || throw(ArgumentError("u must have size ($(Nx+1), $Ny)"))
@@ -48,17 +50,16 @@ function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
 
-    du_dx_center = similar(float.(u), Nx, Ny)
-    dv_dy_center = similar(float.(v), Nx, Ny)
+    du_dx = similar(float.(u), Nx, Ny)
+    dv_dy = similar(float.(v), Nx, Ny)
 
     for j in 1:Ny, i in 1:Nx
-        du_dx_center[i, j] = (u[i + 1, j] - u[i, j]) / dx
-        dv_dy_center[i, j] = (v[i, j + 1] - v[i, j]) / dy
+        du_dx[i, j] = (u[i + 1, j] - u[i, j]) / dx
+        dv_dy[i, j] = (v[i, j + 1] - v[i, j]) / dy
     end
 
-    return du_dx_center, dv_dy_center
+    return du_dx, dv_dy
 end
 
-du_dx_center, dv_dy_center = gradients(u, v, dx, dy)
 
 
