@@ -301,44 +301,6 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
     return u_next, v_next
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    Nx, Ny = 4, 3
-    dx, dy = 0.5, 0.25
-    ν = 1e-2
-    ρ = 1.0
-    dt = 0.05
-
-    _, u, v = allocate_staggered_fields(Nx, Ny)
-
-    for j in 1:Ny, i in 1:Nx+1
-        u[i, j] = i + 0.2j
-    end
-    for j in 1:Ny+1, i in 1:Nx
-        v[i, j] = -0.3i + 0.5j
-    end
-
-    fluxes = diffusive_fluxes(u, v, ν, dx, dy)
-    println("Diffusive fluxes:")
-    @show fluxes.Fx_udiff fluxes.Fy_udiff
-    @show fluxes.Fx_vdiff fluxes.Fy_vdiff
-
-    u_star, v_star = intermediate_velocity(u, v, ν, dt, dx, dy)
-    println("\nIntermediate velocity (u*, v*):")
-    @show u_star v_star
-
-    rhs = (ρ / dt) .* divergence_center(u_star, v_star, dx, dy)
-    p_next = solve_pressure_poisson(rhs, dx, dy)
-    u_next, v_next = projection_step(u_star, v_star, p_next, ρ, dt, dx, dy)
-
-    println("\nPressure from Poisson equation:")
-    @show p_next
-    println("\nProjected velocity (uⁿ⁺¹, vⁿ⁺¹):")
-    @show u_next v_next
-
-    @show size(fluxes.Fx_udiff) size(fluxes.Fy_udiff)
-    @show size(fluxes.Fx_vdiff) size(fluxes.Fy_vdiff)
-end
-
 """Initialize staggered velocities to zero: `u,v = (0,0)`."""
 function initialize_zero_velocity(Nx::Int, Ny::Int)
     u = zeros(Nx + 1, Ny)
@@ -443,7 +405,7 @@ Discrete form used at cell centers:
 
 Then mapped back to staggered faces.
 """
-function intermediate_velocity(
+function intermediate_velocity_flux_form(
     u::AbstractMatrix,
     v::AbstractMatrix,
     ν::Real,
@@ -474,4 +436,100 @@ function intermediate_velocity(
         div_u = div_u,
         div_v = div_v,
     )
+end
+
+function _print_matrix(name::AbstractString, A::AbstractMatrix)
+    println("\n" * name * " (size=" * string(size(A)) * ")")
+    display(A)
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    Nx, Ny = 4, 3
+    dx, dy = 0.5, 0.25
+    ν = 1e-2
+    ρ = 1.0
+    dt = 0.05
+
+    p, u, v = allocate_staggered_fields(Nx, Ny)
+    for j in 1:Ny, i in 1:Nx+1
+        u[i, j] = i + 0.2j
+    end
+    for j in 1:Ny+1, i in 1:Nx
+        v[i, j] = -0.3i + 0.5j
+    end
+
+    _print_matrix("allocate_staggered_fields -> p", p)
+    _print_matrix("allocate_staggered_fields -> u", u)
+    _print_matrix("allocate_staggered_fields -> v", v)
+
+    du_dx_center, dv_dy_center = center_normal_gradients(u, v, dx, dy)
+    _print_matrix("center_normal_gradients -> du_dx_center", du_dx_center)
+    _print_matrix("center_normal_gradients -> dv_dy_center", dv_dy_center)
+
+    _print_matrix("interpolate_center_to_xfaces(du_dx_center)", interpolate_center_to_xfaces(du_dx_center))
+    _print_matrix("interpolate_center_to_yfaces(du_dx_center)", interpolate_center_to_yfaces(du_dx_center))
+    _print_matrix("u_to_centers(u)", u_to_centers(u))
+    _print_matrix("v_to_centers(v)", v_to_centers(v))
+
+    grads = interpolated_gradients(u, v, dx, dy)
+    _print_matrix("interpolated_gradients -> du_dx_xfaces", grads.du_dx_xfaces)
+    _print_matrix("interpolated_gradients -> du_dx_yfaces", grads.du_dx_yfaces)
+    _print_matrix("interpolated_gradients -> dv_dy_xfaces", grads.dv_dy_xfaces)
+    _print_matrix("interpolated_gradients -> dv_dy_yfaces", grads.dv_dy_yfaces)
+    _print_matrix("interpolated_gradients -> du_dy_yfaces", grads.du_dy_yfaces)
+    _print_matrix("interpolated_gradients -> dv_dx_xfaces", grads.dv_dx_xfaces)
+
+    diff = diffusive_fluxes(u, v, ν, dx, dy)
+    _print_matrix("diffusive_fluxes -> Fx_udiff", diff.Fx_udiff)
+    _print_matrix("diffusive_fluxes -> Fy_udiff", diff.Fy_udiff)
+    _print_matrix("diffusive_fluxes -> Fx_vdiff", diff.Fx_vdiff)
+    _print_matrix("diffusive_fluxes -> Fy_vdiff", diff.Fy_vdiff)
+
+    _print_matrix("_laplacian_u(u)", _laplacian_u(u, dx, dy))
+    _print_matrix("_laplacian_v(v)", _laplacian_v(v, dx, dy))
+
+    u_star, v_star = intermediate_velocity(u, v, ν, dt, dx, dy)
+    _print_matrix("intermediate_velocity -> u_star", u_star)
+    _print_matrix("intermediate_velocity -> v_star", v_star)
+
+    div_center = divergence_center(u_star, v_star, dx, dy)
+    _print_matrix("divergence_center(u_star, v_star)", div_center)
+
+    rhs = (ρ / dt) .* div_center
+    _print_matrix("Poisson RHS", rhs)
+
+    p_next = solve_pressure_poisson(rhs, dx, dy)
+    _print_matrix("solve_pressure_poisson -> p_next", p_next)
+
+    u_next, v_next = projection_step(u_star, v_star, p_next, ρ, dt, dx, dy)
+    _print_matrix("projection_step -> u_next", u_next)
+    _print_matrix("projection_step -> v_next", v_next)
+
+    u0, v0 = initialize_zero_velocity(Nx, Ny)
+    _print_matrix("initialize_zero_velocity -> u0", u0)
+    _print_matrix("initialize_zero_velocity -> v0", v0)
+
+    uc = u_to_centers(u)
+    vc = v_to_centers(v)
+    _print_matrix("xfaces_to_centers(u)", xfaces_to_centers(u))
+    _print_matrix("yfaces_to_centers(v)", yfaces_to_centers(v))
+    _print_matrix("centers_to_xfaces(uc)", centers_to_xfaces(uc))
+    _print_matrix("centers_to_yfaces(vc)", centers_to_yfaces(vc))
+
+    conv = convective_fluxes(u, v, dx, dy)
+    _print_matrix("convective_fluxes -> Fx_uconv", conv.Fx_uconv)
+    _print_matrix("convective_fluxes -> Fy_uconv", conv.Fy_uconv)
+    _print_matrix("convective_fluxes -> Fx_vconv", conv.Fx_vconv)
+    _print_matrix("convective_fluxes -> Fy_vconv", conv.Fy_vconv)
+
+    _print_matrix("flux_divergence(Fx_uconv, Fy_uconv)", flux_divergence(conv.Fx_uconv, conv.Fy_uconv, dx, dy))
+    _print_matrix("flux_divergence(Fx_vconv, Fy_vconv)", flux_divergence(conv.Fx_vconv, conv.Fy_vconv, dx, dy))
+
+    iv_flux = intermediate_velocity_flux_form(u, v, ν, dx, dy, dt)
+    _print_matrix("intermediate_velocity_flux_form -> ustar", iv_flux.ustar)
+    _print_matrix("intermediate_velocity_flux_form -> vstar", iv_flux.vstar)
+    _print_matrix("intermediate_velocity_flux_form -> ustar_centers", iv_flux.ustar_centers)
+    _print_matrix("intermediate_velocity_flux_form -> vstar_centers", iv_flux.vstar_centers)
+    _print_matrix("intermediate_velocity_flux_form -> div_u", iv_flux.div_u)
+    _print_matrix("intermediate_velocity_flux_form -> div_v", iv_flux.div_v)
 end
