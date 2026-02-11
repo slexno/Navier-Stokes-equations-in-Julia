@@ -26,20 +26,20 @@ function initialize_velocity!(u, v, x_centers, y_centers, x_faces_u, y_faces_v)
     x_c, y_c = L_x/2, L_y/2  # Centre du vortex
     
     # Initialiser u (vitesse horizontale)
-    for j in 1:N_y, i in 1:N_x_plus
-        x = x_faces_u[i]
-        y = y_centers[j]
-        r2 = (x - x_c)^2 + (y - y_c)^2
-        u[j, i] = -(y - y_c) * exp(-20 * r2)  # Rotation autour du centre
-    end
+    # for j in 1:N_y, i in 1:N_x_plus
+    #     x = x_faces_u[i]
+    #     y = y_centers[j]
+    #     r2 = (x - x_c)^2 + (y - y_c)^2
+    #     u[j, i] = -(y - y_c) * exp(-20 * r2)  # Rotation autour du centre
+    # end
     
-    # Initialiser v (vitesse verticale)
-    for j in 1:N_y_plus, i in 1:N_x
-        x = x_centers[i]
-        y = y_faces_v[j]
-        r2 = (x - x_c)^2 + (y - y_c)^2
-        v[j, i] = (x - x_c) * exp(-20 * r2)  # Rotation autour du centre
-    end
+    # # Initialiser v (vitesse verticale)
+    # for j in 1:N_y_plus, i in 1:N_x
+    #     x = x_centers[i]
+    #     y = y_faces_v[j]
+    #     r2 = (x - x_c)^2 + (y - y_c)^2
+    #     v[j, i] = (x - x_c) * exp(-20 * r2)  # Rotation autour du centre
+    # end
 end
 
 ####################################################################################################################
@@ -47,8 +47,8 @@ end
 ####################################################################################################################
 
 # Paramètres domaine
-N_x, N_y = 10, 10  # Nombre cellules pression
-L_x, L_y = 5, 5  # Dimensions domaine
+N_x, N_y = 3, 3 # Nombre cellules pression
+L_x, L_y = 1, 1  # Dimensions domaine
 
 # Espacement grille
 Dx = L_x / N_x
@@ -58,8 +58,8 @@ Dy = L_y / N_y
 P = zeros(N_y, N_x)
 
 # Grilles vitesse (décalées)
-u = zeros(N_y, N_x + 1)  
-v = zeros(N_y + 1, N_x) 
+u = ones(N_y, N_x + 1)  
+v = ones(N_y + 1, N_x) 
 
 # Centres
 x_centers = range(Dx/2, L_x - Dx/2, length=N_x)
@@ -71,7 +71,7 @@ y_faces_v = range(0.0, L_y, length=N_y+1)  # Faces pour v
 nu = 0.01
 
 # Initialisation
-initialize_velocity!(u, v, x_centers, y_centers, x_faces_u, y_faces_v)
+#initialize_velocity!(u, v, x_centers, y_centers, x_faces_u, y_faces_v)
 
 # Appliquer conditions limites
 apply_periodic_u!(u)
@@ -107,7 +107,7 @@ dudx[:, :] = (u[:, 2:end] - u[:, 1:end-1]) / Dx
 dudy = zeros(N_y + 1, N_x + 1)
 dudy[2:end-1, :] = (u[2:end, :] - u[1:end-1, :]) / Dy
 # Périodicité en y
-dudy[1, :] = dudy[end-1, :]   # ou dudy[1,:] = dudy[N_y, :]
+dudy[1, :] = dudy[end-1, :]
 dudy[end, :] = dudy[2, :]
 
 # ∂v/∂x
@@ -123,7 +123,7 @@ dvdy[:, :] = (v[2:end, :] - v[1:end-1, :]) / Dy
 
 
 ####################################################################################################################
-# Maintenant, on calcule tous les flux de diffusion aux faces.
+# Maintenant, on calcule tous les flux diffusifs aux faces.
 ####################################################################################################################
 
 # Flux diffusion u
@@ -136,6 +136,41 @@ F_u_diff_x[:, 2:end-1] = nu * Dy * (dudx[:, 2:end] - dudx[:, 1:end-1])  # Diffé
 F_u_diff_y = zeros(N_y, N_x + 1)
 F_u_diff_y[2:end-1, :] = nu * Dx * (dudy[3:end-1, :] - dudy[2:end-2, :])  # Différence entre flux Nord et Sud
 
+# Flux diffusion v
+F_v_diff_x = zeros(N_y + 1, N_x)
+F_v_diff_x[2:end-1, :] .= nu .* Dy .* (dvdx[2:end-1, 2:end] .- dvdx[2:end-1, 1:end-1])
 
-div_v = dudx + dvdy   # dudx et dvdy ont tous deux la taille (N_y, N_x)
-println("Norme max de la divergence = ", maximum(abs.(div_v)))
+F_v_diff_y = zeros(N_y + 1, N_x)
+F_v_diff_y[2:end-1, :] .= nu .* Dx .* (dvdy[3:end, :] .- dvdy[2:end-1, :])
+
+####################################################################################################################
+# Maintenant, on calcule tous les flux convectifs.
+####################################################################################################################
+
+# Flux convectifs u
+# Interpolation de u sur ses propres faces
+u_at_faces_x = zeros(N_y, N_x)
+u_at_faces_x[:, :] = 0.5 * (u[:, 1:end-1] + u[:, 2:end])
+
+# Flux en x
+F_u_conv_x = zeros(N_y, N_x + 1)
+F_u_conv_x[:, 2:end-1] = Dy * (u[:, 2:end-1] .* u_at_faces_x[:, 2:end] - u[:, 1:end-2] .* u_at_faces_x[:, 1:end-1])
+
+# Flux en y
+F_u_conv_y = zeros(N_y, N_x + 1)
+F_u_conv_y[:, 2:end-1] = Dx * (v_face_x[2:end, 2:end-1] .* u_face_y[2:end, 2:end-1] - v_face_x[1:end-1, 2:end-1] .* u_face_y[1:end-1, 2:end-1])
+
+#Flux convectifs v
+# Interpolation de v sur ses propres faces 
+v_at_faces_y = zeros(N_y, N_x)
+v_at_faces_y[:, :] = 0.5 * (v[1:end-1, :] + v[2:end, :])
+
+# Flux en x
+F_v_conv_x = zeros(N_y + 1, N_x)
+F_v_conv_x[2:end-1, :] = Dy * (u_face_y[2:end-1, 2:end] .* v_face_x[2:end-1, 2:end] - u_face_y[2:end-1, 1:end-1] .* v_face_x[2:end-1, 1:end-1])
+
+# Flux en y
+F_v_conv_y = zeros(N_y + 1, N_x)
+F_v_conv_y[2:end-1, :] = Dx * (v[2:end-1, :] .* v_at_faces_y[2:end, :] - v[1:end-2, :] .* v_at_faces_y[1:end-1, :])
+
+display(F_u_conv_x)
