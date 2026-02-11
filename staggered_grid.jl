@@ -195,8 +195,8 @@ end
 
 
 
-Nx, Ny = 3, 3
-dx, dy = 0.5, 0.25
+Nx, Ny = 10,10
+dx, dy = 0.5, 0.5
 ν = 1e-2
 
 _, u, v = allocate_staggered_fields(Nx, Ny)
@@ -214,4 +214,10 @@ println("Fx_udiff = ", fluxes.Fx_udiff,'\n')
 println("Fy_udiff = ", fluxes.Fy_udiff,'\n') 
 println("Fx_vdiff = ", fluxes.Fx_vdiff,'\n')
 println("Fy_vdiff = ", fluxes.Fy_vdiff,'\n')
+
+
+
+function convective_flux()
+    
+end
 
