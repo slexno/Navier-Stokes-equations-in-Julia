@@ -192,23 +192,26 @@ function diffusive_fluxes(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dx::Re
     )
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    Nx, Ny = 4, 3
-    dx, dy = 0.5, 0.25
-    ν = 1e-2
 
-    _, u, v = allocate_staggered_fields(Nx, Ny)
 
-    for j in 1:Ny, i in 1:Nx+1
-        u[i, j] = i + 0.2j
-    end
-    for j in 1:Ny+1, i in 1:Nx
-        v[i, j] = -0.3i + 0.5j
-    end
 
-    fluxes = diffusive_fluxes(u, v, ν, dx, dy)
-    @show size(fluxes.Fx_udiff) size(fluxes.Fy_udiff)
-    @show size(fluxes.Fx_vdiff) size(fluxes.Fy_vdiff)
+Nx, Ny = 3, 3
+dx, dy = 0.5, 0.25
+ν = 1e-2
+
+_, u, v = allocate_staggered_fields(Nx, Ny)
+
+for j in 1:Ny, i in 1:Nx+1
+    u[i, j] = i + 0.2j
 end
-
+for j in 1:Ny+1, i in 1:Nx
+    v[i, j] = -0.3i + 0.5j
+end
+fluxes = diffusive_fluxes(u, v, ν, dx, dy)
+@show size(fluxes.Fx_udiff) size(fluxes.Fy_udiff)
+@show size(fluxes.Fx_vdiff) size(fluxes.Fy_vdiff)
+println("Fx_udiff = ", fluxes.Fx_udiff,'\n')
+println("Fy_udiff = ", fluxes.Fy_udiff,'\n') 
+println("Fx_vdiff = ", fluxes.Fx_vdiff,'\n')
+println("Fy_vdiff = ", fluxes.Fy_vdiff,'\n')
 
