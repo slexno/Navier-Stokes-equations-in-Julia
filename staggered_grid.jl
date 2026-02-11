@@ -192,23 +192,113 @@ function diffusive_fluxes(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dx::Re
     )
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    Nx, Ny = 4, 3
-    dx, dy = 0.5, 0.25
-    ν = 1e-2
+"""Discrete Laplacian of face-centered `u` using nearest-neighbor boundary values."""
+function _laplacian_u(u::AbstractMatrix, dx::Real, dy::Real)
+    Nx1, Ny = size(u)
+    lap_u = similar(float.(u))
 
-    _, u, v = allocate_staggered_fields(Nx, Ny)
+    for j in 1:Ny, i in 1:Nx1
+        u_w = u[max(i - 1, 1), j]
+        u_e = u[min(i + 1, Nx1), j]
+        u_s = u[i, max(j - 1, 1)]
+        u_n = u[i, min(j + 1, Ny)]
 
-    for j in 1:Ny, i in 1:Nx+1
-        u[i, j] = i + 0.2j
+        lap_u[i, j] = (u_e - 2u[i, j] + u_w) / dx^2 + (u_n - 2u[i, j] + u_s) / dy^2
     end
-    for j in 1:Ny+1, i in 1:Nx
-        v[i, j] = -0.3i + 0.5j
+
+    return lap_u
+end
+
+"""Discrete Laplacian of face-centered `v` using nearest-neighbor boundary values."""
+function _laplacian_v(v::AbstractMatrix, dx::Real, dy::Real)
+    Nx, Ny1 = size(v)
+    lap_v = similar(float.(v))
+
+    for j in 1:Ny1, i in 1:Nx
+        v_w = v[max(i - 1, 1), j]
+        v_e = v[min(i + 1, Nx), j]
+        v_s = v[i, max(j - 1, 1)]
+        v_n = v[i, min(j + 1, Ny1)]
+
+        lap_v[i, j] = (v_e - 2v[i, j] + v_w) / dx^2 + (v_n - 2v[i, j] + v_s) / dy^2
     end
 
-    fluxes = diffusive_fluxes(u, v, ν, dx, dy)
-    @show size(fluxes.Fx_udiff) size(fluxes.Fy_udiff)
-    @show size(fluxes.Fx_vdiff) size(fluxes.Fy_vdiff)
+    return lap_v
+end
+
+"""Intermediate velocity (predictor): `u* = u + Δt ν ∇²u`, `v* = v + Δt ν ∇²v`."""
+function intermediate_velocity(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dt::Real, dx::Real, dy::Real)
+    u_star = u .+ dt .* ν .* _laplacian_u(u, dx, dy)
+    v_star = v .+ dt .* ν .* _laplacian_v(v, dx, dy)
+    return u_star, v_star
+end
+
+"""Cell-centered divergence: `∂u/∂x + ∂v/∂y` from staggered velocities."""
+function divergence_center(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
+    du_dx, dv_dy = center_normal_gradients(u, v, dx, dy)
+    return du_dx .+ dv_dy
+end
+
+"""
+Solve pressure Poisson equation:
+`∇²pⁿ⁺¹ = (ρ/Δt) (∂u*/∂x + ∂v*/∂y)`
+with homogeneous Neumann boundaries and pressure gauge `p[1,1] = 0`.
+"""
+function solve_pressure_poisson(rhs::AbstractMatrix, dx::Real, dy::Real;
+    maxiter::Int = 2000, tol::Real = 1e-8)
+    Nx, Ny = size(rhs)
+    p = zeros(float(eltype(rhs)), Nx, Ny)
+    idx2 = 1 / dx^2
+    idy2 = 1 / dy^2
+
+    for _ in 1:maxiter
+        max_change = 0.0
+
+        for j in 1:Ny, i in 1:Nx
+            if i == 1 && j == 1
+                continue # pressure gauge
+            end
+
+            p_w = p[max(i - 1, 1), j]
+            p_e = p[min(i + 1, Nx), j]
+            p_s = p[i, max(j - 1, 1)]
+            p_n = p[i, min(j + 1, Ny)]
+
+            p_new = ((p_w + p_e) * idx2 + (p_s + p_n) * idy2 - rhs[i, j]) / (2idx2 + 2idy2)
+            max_change = max(max_change, abs(p_new - p[i, j]))
+            p[i, j] = p_new
+        end
+
+        max_change < tol && break
+    end
+
+    return p
+end
+
+"""
+Projection step:
+`(uⁿ⁺¹ - u*)/Δt = -(1/ρ) ∂pⁿ⁺¹/∂x`,
+`(vⁿ⁺¹ - v*)/Δt = -(1/ρ) ∂pⁿ⁺¹/∂y`.
+"""
+function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::AbstractMatrix,
+    ρ::Real, dt::Real, dx::Real, dy::Real)
+    Nx, Ny = size(p)
+    _check_sizes(u_star, v_star, Nx, Ny)
+
+    u_next = copy(float.(u_star))
+    v_next = copy(float.(v_star))
+
+    for j in 1:Ny, i in 2:Nx
+        dpdx = (p[i, j] - p[i - 1, j]) / dx
+        u_next[i, j] = u_star[i, j] - (dt / ρ) * dpdx
+    end
+
+    for j in 2:Ny, i in 1:Nx
+        dpdy = (p[i, j] - p[i, j - 1]) / dy
+        v_next[i, j] = v_star[i, j] - (dt / ρ) * dpdy
+    end
+
+    return u_next, v_next
 end
 
 """Initialize staggered velocities to zero: `u,v = (0,0)`."""
@@ -315,7 +405,7 @@ Discrete form used at cell centers:
 
 Then mapped back to staggered faces.
 """
-function intermediate_velocity(
+function intermediate_velocity_flux_form(
     u::AbstractMatrix,
     v::AbstractMatrix,
     ν::Real,
@@ -346,4 +436,100 @@ function intermediate_velocity(
         div_u = div_u,
         div_v = div_v,
     )
+end
+
+function _print_matrix(name::AbstractString, A::AbstractMatrix)
+    println("\n" * name * " (size=" * string(size(A)) * ")")
+    display(A)
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    Nx, Ny = 4, 3
+    dx, dy = 0.5, 0.25
+    ν = 1e-2
+    ρ = 1.0
+    dt = 0.05
+
+    p, u, v = allocate_staggered_fields(Nx, Ny)
+    for j in 1:Ny, i in 1:Nx+1
+        u[i, j] = i + 0.2j
+    end
+    for j in 1:Ny+1, i in 1:Nx
+        v[i, j] = -0.3i + 0.5j
+    end
+
+    _print_matrix("allocate_staggered_fields -> p", p)
+    _print_matrix("allocate_staggered_fields -> u", u)
+    _print_matrix("allocate_staggered_fields -> v", v)
+
+    du_dx_center, dv_dy_center = center_normal_gradients(u, v, dx, dy)
+    _print_matrix("center_normal_gradients -> du_dx_center", du_dx_center)
+    _print_matrix("center_normal_gradients -> dv_dy_center", dv_dy_center)
+
+    _print_matrix("interpolate_center_to_xfaces(du_dx_center)", interpolate_center_to_xfaces(du_dx_center))
+    _print_matrix("interpolate_center_to_yfaces(du_dx_center)", interpolate_center_to_yfaces(du_dx_center))
+    _print_matrix("u_to_centers(u)", u_to_centers(u))
+    _print_matrix("v_to_centers(v)", v_to_centers(v))
+
+    grads = interpolated_gradients(u, v, dx, dy)
+    _print_matrix("interpolated_gradients -> du_dx_xfaces", grads.du_dx_xfaces)
+    _print_matrix("interpolated_gradients -> du_dx_yfaces", grads.du_dx_yfaces)
+    _print_matrix("interpolated_gradients -> dv_dy_xfaces", grads.dv_dy_xfaces)
+    _print_matrix("interpolated_gradients -> dv_dy_yfaces", grads.dv_dy_yfaces)
+    _print_matrix("interpolated_gradients -> du_dy_yfaces", grads.du_dy_yfaces)
+    _print_matrix("interpolated_gradients -> dv_dx_xfaces", grads.dv_dx_xfaces)
+
+    diff = diffusive_fluxes(u, v, ν, dx, dy)
+    _print_matrix("diffusive_fluxes -> Fx_udiff", diff.Fx_udiff)
+    _print_matrix("diffusive_fluxes -> Fy_udiff", diff.Fy_udiff)
+    _print_matrix("diffusive_fluxes -> Fx_vdiff", diff.Fx_vdiff)
+    _print_matrix("diffusive_fluxes -> Fy_vdiff", diff.Fy_vdiff)
+
+    _print_matrix("_laplacian_u(u)", _laplacian_u(u, dx, dy))
+    _print_matrix("_laplacian_v(v)", _laplacian_v(v, dx, dy))
+
+    u_star, v_star = intermediate_velocity(u, v, ν, dt, dx, dy)
+    _print_matrix("intermediate_velocity -> u_star", u_star)
+    _print_matrix("intermediate_velocity -> v_star", v_star)
+
+    div_center = divergence_center(u_star, v_star, dx, dy)
+    _print_matrix("divergence_center(u_star, v_star)", div_center)
+
+    rhs = (ρ / dt) .* div_center
+    _print_matrix("Poisson RHS", rhs)
+
+    p_next = solve_pressure_poisson(rhs, dx, dy)
+    _print_matrix("solve_pressure_poisson -> p_next", p_next)
+
+    u_next, v_next = projection_step(u_star, v_star, p_next, ρ, dt, dx, dy)
+    _print_matrix("projection_step -> u_next", u_next)
+    _print_matrix("projection_step -> v_next", v_next)
+
+    u0, v0 = initialize_zero_velocity(Nx, Ny)
+    _print_matrix("initialize_zero_velocity -> u0", u0)
+    _print_matrix("initialize_zero_velocity -> v0", v0)
+
+    uc = u_to_centers(u)
+    vc = v_to_centers(v)
+    _print_matrix("xfaces_to_centers(u)", xfaces_to_centers(u))
+    _print_matrix("yfaces_to_centers(v)", yfaces_to_centers(v))
+    _print_matrix("centers_to_xfaces(uc)", centers_to_xfaces(uc))
+    _print_matrix("centers_to_yfaces(vc)", centers_to_yfaces(vc))
+
+    conv = convective_fluxes(u, v, dx, dy)
+    _print_matrix("convective_fluxes -> Fx_uconv", conv.Fx_uconv)
+    _print_matrix("convective_fluxes -> Fy_uconv", conv.Fy_uconv)
+    _print_matrix("convective_fluxes -> Fx_vconv", conv.Fx_vconv)
+    _print_matrix("convective_fluxes -> Fy_vconv", conv.Fy_vconv)
+
+    _print_matrix("flux_divergence(Fx_uconv, Fy_uconv)", flux_divergence(conv.Fx_uconv, conv.Fy_uconv, dx, dy))
+    _print_matrix("flux_divergence(Fx_vconv, Fy_vconv)", flux_divergence(conv.Fx_vconv, conv.Fy_vconv, dx, dy))
+
+    iv_flux = intermediate_velocity_flux_form(u, v, ν, dx, dy, dt)
+    _print_matrix("intermediate_velocity_flux_form -> ustar", iv_flux.ustar)
+    _print_matrix("intermediate_velocity_flux_form -> vstar", iv_flux.vstar)
+    _print_matrix("intermediate_velocity_flux_form -> ustar_centers", iv_flux.ustar_centers)
+    _print_matrix("intermediate_velocity_flux_form -> vstar_centers", iv_flux.vstar_centers)
+    _print_matrix("intermediate_velocity_flux_form -> div_u", iv_flux.div_u)
+    _print_matrix("intermediate_velocity_flux_form -> div_v", iv_flux.div_v)
 end
