@@ -693,7 +693,7 @@ function demo_staggered_grid()
     # 4) Poisson pression
     # 5) projection finale
     # ---------------------------
-    Nx, Ny = 10, 10
+    Nx, Ny = 15, 15
     dx, dy = 0.5, 0.5
     ν = 1e-2
     ρ = 1.0
