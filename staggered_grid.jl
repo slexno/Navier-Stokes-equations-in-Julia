@@ -422,7 +422,7 @@ function yfaces_to_centers(phi_y::AbstractMatrix)
 end
 
 """
-Compute convective fluxes on faces for both transported components (`u` and `v`).
+Compute convective fluxes on faces for both transported components (`u` and `v`) using an upwind method.
 
 On x-normal faces: `Fx = Uface * ϕface * dSx` with `dSx = dy`.
 On y-normal faces: `Fy = Vface * ϕface * dSy` with `dSy = dx`.
@@ -434,8 +434,8 @@ Returned arrays are face-located:
 function convective_fluxes(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real;
     uc::Union{Nothing,AbstractMatrix} = nothing,
     vc::Union{Nothing,AbstractMatrix} = nothing)
-    # Flux convectifs quadratiques : F = (vitesse advectante) * (quantité transportée) * surface.
-    # Les champs sont interpolés vers les faces pour respecter la géométrie MAC.
+    # Flux convectifs avec reconstruction upwind :
+    # F = (vitesse advectante) * (quantité transportée upwind) * surface.
     Nx = size(v, 1)
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
@@ -446,14 +446,16 @@ function convective_fluxes(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::R
     Uface = interpolate_center_to_xfaces(uc_local)
     Vface = interpolate_center_to_yfaces(vc_local)
 
-    u_yface = interpolate_center_to_yfaces(uc_local)
-    v_xface = interpolate_center_to_xfaces(vc_local)
+    u_xface_upwind = upwind_center_to_xfaces(uc_local, Uface)
+    u_yface_upwind = upwind_center_to_yfaces(uc_local, Vface)
+    v_xface_upwind = upwind_center_to_xfaces(vc_local, Uface)
+    v_yface_upwind = upwind_center_to_yfaces(vc_local, Vface)
 
-    Fx_uconv = Uface .* Uface .* dy
-    Fy_uconv = Vface .* u_yface .* dx
+    Fx_uconv = Uface .* u_xface_upwind .* dy
+    Fy_uconv = Vface .* u_yface_upwind .* dx
 
-    Fx_vconv = Uface .* v_xface .* dy
-    Fy_vconv = Vface .* Vface .* dx
+    Fx_vconv = Uface .* v_xface_upwind .* dy
+    Fy_vconv = Vface .* v_yface_upwind .* dx
 
     return (
         Fx_uconv = Fx_uconv,
@@ -461,6 +463,43 @@ function convective_fluxes(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::R
         Fx_vconv = Fx_vconv,
         Fy_vconv = Fy_vconv,
     )
+end
+
+
+"""Upwind reconstruction from cell centers to x-faces using face advecting velocity."""
+function upwind_center_to_xfaces(phi_c::AbstractMatrix, Uface::AbstractMatrix)
+    Nx, Ny = size(phi_c)
+    size(Uface) == (Nx + 1, Ny) || throw(ArgumentError("Uface must have size ($(Nx+1), $Ny)"))
+
+    phi_x = similar(float.(phi_c), Nx + 1, Ny)
+
+    for j in 1:Ny
+        phi_x[1, j] = phi_c[1, j]
+        for i in 2:Nx
+            phi_x[i, j] = Uface[i, j] >= 0 ? phi_c[i - 1, j] : phi_c[i, j]
+        end
+        phi_x[Nx + 1, j] = phi_c[Nx, j]
+    end
+
+    return phi_x
+end
+
+"""Upwind reconstruction from cell centers to y-faces using face advecting velocity."""
+function upwind_center_to_yfaces(phi_c::AbstractMatrix, Vface::AbstractMatrix)
+    Nx, Ny = size(phi_c)
+    size(Vface) == (Nx, Ny + 1) || throw(ArgumentError("Vface must have size ($Nx, $(Ny+1))"))
+
+    phi_y = similar(float.(phi_c), Nx, Ny + 1)
+
+    for i in 1:Nx
+        phi_y[i, 1] = phi_c[i, 1]
+        for j in 2:Ny
+            phi_y[i, j] = Vface[i, j] >= 0 ? phi_c[i, j - 1] : phi_c[i, j]
+        end
+        phi_y[i, Ny + 1] = phi_c[i, Ny]
+    end
+
+    return phi_y
 end
 
 """Finite-volume divergence from face fluxes to cell centers `(Nx,Ny)`."""
