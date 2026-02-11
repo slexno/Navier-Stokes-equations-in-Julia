@@ -21,12 +21,17 @@ function _check_sizes(u, v, Nx::Int, Ny::Int)
 end
 
 
-"""Apply no-slip wall conditions on all domain borders (normal components on boundary faces set to zero)."""
+"""Apply no-slip wall conditions on all domain borders (all boundary face velocities set to zero)."""
 function apply_wall_boundaries!(u::AbstractMatrix, v::AbstractMatrix)
     u[1, :] .= 0.0
     u[end, :] .= 0.0
+    u[:, 1] .= 0.0
+    u[:, end] .= 0.0
+
     v[:, 1] .= 0.0
     v[:, end] .= 0.0
+    v[1, :] .= 0.0
+    v[end, :] .= 0.0
     return u, v
 end
 
@@ -615,12 +620,17 @@ function verify_wall_boundaries_case()
     v = fill(-2.0, Nx, Ny + 1)
     apply_wall_boundaries!(u, v)
 
-    all(u[1, :] .== 0.0) || error("Mur gauche non imposé")
-    all(u[end, :] .== 0.0) || error("Mur droit non imposé")
-    all(v[:, 1] .== 0.0) || error("Mur bas non imposé")
-    all(v[:, end] .== 0.0) || error("Mur haut non imposé")
+    all(u[1, :] .== 0.0) || error("Mur gauche non imposé pour u")
+    all(u[end, :] .== 0.0) || error("Mur droit non imposé pour u")
+    all(u[:, 1] .== 0.0) || error("Mur bas non imposé pour u")
+    all(u[:, end] .== 0.0) || error("Mur haut non imposé pour u")
 
-    println("Validation parois: OK (u et v nuls sur tous les bords)")
+    all(v[:, 1] .== 0.0) || error("Mur bas non imposé pour v")
+    all(v[:, end] .== 0.0) || error("Mur haut non imposé pour v")
+    all(v[1, :] .== 0.0) || error("Mur gauche non imposé pour v")
+    all(v[end, :] .== 0.0) || error("Mur droit non imposé pour v")
+
+    println("Validation parois: OK (u et v nuls sur les 4 côtés)")
 end
 
 
