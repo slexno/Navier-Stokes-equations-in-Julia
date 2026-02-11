@@ -20,6 +20,24 @@ function _check_sizes(u, v, Nx::Int, Ny::Int)
     size(v) == (Nx, Ny + 1) || throw(ArgumentError("v must have size ($Nx, $(Ny+1))"))
 end
 
+
+"""Apply no-slip wall conditions on all domain borders (normal components on boundary faces set to zero)."""
+function apply_wall_boundaries!(u::AbstractMatrix, v::AbstractMatrix)
+    u[1, :] .= 0.0
+    u[end, :] .= 0.0
+    v[:, 1] .= 0.0
+    v[:, end] .= 0.0
+    return u, v
+end
+
+"""Return copies of `(u, v)` that satisfy wall boundary conditions on all borders."""
+function with_wall_boundaries(u::AbstractMatrix, v::AbstractMatrix)
+    uw = copy(float.(u))
+    vw = copy(float.(v))
+    apply_wall_boundaries!(uw, vw)
+    return uw, vw
+end
+
 """
 Compute gradients naturally located at pressure-cell centers:
 - `du_dx_center[i,j] = (u[i+1,j] - u[i,j]) / dx`
@@ -289,8 +307,10 @@ function intermediate_velocity(u::AbstractMatrix, v::AbstractMatrix, ν::Real, d
     # Étape prédicteur explicite (sans pression) :
     #   u* = u^n + dt * ν * ∇²u^n
     #   v* = v^n + dt * ν * ∇²v^n
-    u_star = u .+ dt .* ν .* _laplacian_u(u, dx, dy)
-    v_star = v .+ dt .* ν .* _laplacian_v(v, dx, dy)
+    uw, vw = with_wall_boundaries(u, v)
+    u_star = uw .+ dt .* ν .* _laplacian_u(uw, dx, dy)
+    v_star = vw .+ dt .* ν .* _laplacian_v(vw, dx, dy)
+    apply_wall_boundaries!(u_star, v_star)
     return u_star, v_star
 end
 
@@ -352,8 +372,7 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
     Nx, Ny = size(p)
     _check_sizes(u_star, v_star, Nx, Ny)
 
-    u_next = copy(float.(u_star))
-    v_next = copy(float.(v_star))
+    u_next, v_next = with_wall_boundaries(u_star, v_star)
 
     for j in 1:Ny, i in 2:Nx
         dpdx = (p[i, j] - p[i - 1, j]) / dx
@@ -365,6 +384,7 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
         v_next[i, j] = v_star[i, j] - (dt / ρ) * dpdy
     end
 
+    apply_wall_boundaries!(u_next, v_next)
     return u_next, v_next
 end
 
@@ -489,10 +509,11 @@ function intermediate_velocity_flux_form(
     # Formulation conservation explicite :
     #   u* = u^n - dt * div(F_conv - F_diff)
     #   v* = v^n - dt * div(F_conv - F_diff)
-    uc = u_to_centers(u)
-    vc = v_to_centers(v)
-    conv = convective_fluxes(u, v, dx, dy; uc = uc, vc = vc)
-    diff = diffusive_fluxes(u, v, ν, dx, dy; uc = uc, vc = vc)
+    uw, vw = with_wall_boundaries(u, v)
+    uc = u_to_centers(uw)
+    vc = v_to_centers(vw)
+    conv = convective_fluxes(uw, vw, dx, dy; uc = uc, vc = vc)
+    diff = diffusive_fluxes(uw, vw, ν, dx, dy; uc = uc, vc = vc)
 
     div_u = flux_divergence(conv.Fx_uconv .- diff.Fx_udiff, conv.Fy_uconv .- diff.Fy_udiff, dx, dy)
     div_v = flux_divergence(conv.Fx_vconv .- diff.Fx_vdiff, conv.Fy_vconv .- diff.Fy_vdiff, dx, dy)
@@ -502,6 +523,7 @@ function intermediate_velocity_flux_form(
 
     ustar = centers_to_xfaces(ustar_c)
     vstar = centers_to_yfaces(vstar_c)
+    apply_wall_boundaries!(ustar, vstar)
 
     return (
         ustar = ustar,
@@ -545,6 +567,21 @@ function verify_constant_gradient_case()
     println("Validation gradients constants: OK (du/dx=$(ax), dv/dy=$(by))")
 end
 
+
+function verify_wall_boundaries_case()
+    Nx, Ny = 3, 3
+    u = fill(1.0, Nx + 1, Ny)
+    v = fill(-2.0, Nx, Ny + 1)
+    apply_wall_boundaries!(u, v)
+
+    all(u[1, :] .== 0.0) || error("Mur gauche non imposé")
+    all(u[end, :] .== 0.0) || error("Mur droit non imposé")
+    all(v[:, 1] .== 0.0) || error("Mur bas non imposé")
+    all(v[:, end] .== 0.0) || error("Mur haut non imposé")
+
+    println("Validation parois: OK (u et v nuls sur tous les bords)")
+end
+
 function _print_matrix(name::AbstractString, A::AbstractMatrix)
     println("\n" * name * " (size=" * string(size(A)) * ")")
     display(A)
@@ -568,6 +605,7 @@ function demo_staggered_grid()
     dt = 0.05
 
     verify_constant_gradient_case()
+    verify_wall_boundaries_case()
 
     p, u, v = allocate_staggered_fields(Nx, Ny)
     for j in 1:Ny, i in 1:Nx+1
@@ -576,6 +614,7 @@ function demo_staggered_grid()
     for j in 1:Ny+1, i in 1:Nx
         v[i, j] = -0.3i + 0.5j
     end
+    apply_wall_boundaries!(u, v)
 
     _print_matrix("allocate_staggered_fields -> p", p)
     _print_matrix("allocate_staggered_fields -> u", u)
