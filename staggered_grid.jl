@@ -44,35 +44,35 @@ function center_normal_gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real,
 end
 
 """Interpolate center values `(Nx, Ny)` to x-normal faces `(Nx+1, Ny)`."""
-function interpolate_center_to_xfaces(ϕc::AbstractMatrix)
-    Nx, Ny = size(ϕc)
-    ϕx = similar(float.(ϕc), Nx + 1, Ny)
+function interpolate_center_to_xfaces(phi_c::AbstractMatrix)
+    Nx, Ny = size(phi_c)
+    phi_x = similar(float.(phi_c), Nx + 1, Ny)
 
     for j in 1:Ny
-        ϕx[1, j] = ϕc[1, j]
+        phi_x[1, j] = phi_c[1, j]
         for i in 2:Nx
-            ϕx[i, j] = 0.5 * (ϕc[i - 1, j] + ϕc[i, j])
+            phi_x[i, j] = 0.5 * (phi_c[i - 1, j] + phi_c[i, j])
         end
-        ϕx[Nx + 1, j] = ϕc[Nx, j]
+        phi_x[Nx + 1, j] = phi_c[Nx, j]
     end
 
-    return ϕx
+    return phi_x
 end
 
 """Interpolate center values `(Nx, Ny)` to y-normal faces `(Nx, Ny+1)`."""
-function interpolate_center_to_yfaces(ϕc::AbstractMatrix)
-    Nx, Ny = size(ϕc)
-    ϕy = similar(float.(ϕc), Nx, Ny + 1)
+function interpolate_center_to_yfaces(phi_c::AbstractMatrix)
+    Nx, Ny = size(phi_c)
+    phi_y = similar(float.(phi_c), Nx, Ny + 1)
 
     for i in 1:Nx
-        ϕy[i, 1] = ϕc[i, 1]
+        phi_y[i, 1] = phi_c[i, 1]
         for j in 2:Ny
-            ϕy[i, j] = 0.5 * (ϕc[i, j - 1] + ϕc[i, j])
+            phi_y[i, j] = 0.5 * (phi_c[i, j - 1] + phi_c[i, j])
         end
-        ϕy[i, Ny + 1] = ϕc[i, Ny]
+        phi_y[i, Ny + 1] = phi_c[i, Ny]
     end
 
-    return ϕy
+    return phi_y
 end
 
 """Cell-centered `u` from face values `(Nx+1,Ny)` -> `(Nx,Ny)`."""
@@ -219,29 +219,29 @@ function initialize_zero_velocity(Nx::Int, Ny::Int)
 end
 
 """Average x-face values `(Nx+1,Ny)` to cell centers `(Nx,Ny)`."""
-function xfaces_to_centers(ϕx::AbstractMatrix)
-    Nx = size(ϕx, 1) - 1
-    Ny = size(ϕx, 2)
-    ϕc = similar(float.(ϕx), Nx, Ny)
+function xfaces_to_centers(phi_x::AbstractMatrix)
+    Nx = size(phi_x, 1) - 1
+    Ny = size(phi_x, 2)
+    phi_c = similar(float.(phi_x), Nx, Ny)
 
     for j in 1:Ny, i in 1:Nx
-        ϕc[i, j] = 0.5 * (ϕx[i, j] + ϕx[i + 1, j])
+        phi_c[i, j] = 0.5 * (phi_x[i, j] + phi_x[i + 1, j])
     end
 
-    return ϕc
+    return phi_c
 end
 
 """Average y-face values `(Nx,Ny+1)` to cell centers `(Nx,Ny)`."""
-function yfaces_to_centers(ϕy::AbstractMatrix)
-    Nx = size(ϕy, 1)
-    Ny = size(ϕy, 2) - 1
-    ϕc = similar(float.(ϕy), Nx, Ny)
+function yfaces_to_centers(phi_y::AbstractMatrix)
+    Nx = size(phi_y, 1)
+    Ny = size(phi_y, 2) - 1
+    phi_c = similar(float.(phi_y), Nx, Ny)
 
     for j in 1:Ny, i in 1:Nx
-        ϕc[i, j] = 0.5 * (ϕy[i, j] + ϕy[i, j + 1])
+        phi_c[i, j] = 0.5 * (phi_y[i, j] + phi_y[i, j + 1])
     end
 
-    return ϕc
+    return phi_c
 end
 
 """
