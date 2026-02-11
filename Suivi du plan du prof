@@ -1,5 +1,48 @@
 ########################## L'idée c'est de coder les équations de Navier Stokes en Julia. ##########################
 
+####################################################################################################################
+# Définition des conditions et initialisation vitesse
+####################################################################################################################
+
+# Fonction pour appliquer des conditions aux limites périodiques
+function apply_periodic_u!(u)
+    N_y, N_x_plus = size(u)
+    # Direction x (faces verticales)
+    u[:, 1] = u[:, N_x_plus-1]
+    u[:, N_x_plus] = u[:, 2]
+end
+
+function apply_periodic_v!(v)
+    N_y_plus, N_x = size(v)
+    # Direction y (faces horizontales)
+    v[1, :] = v[N_y_plus-1, :]
+    v[N_y_plus, :] = v[2, :]
+end
+
+# Fonction pour initialiser avec un champ de vitesse (exemple : vortex)
+function initialize_velocity!(u, v, x_centers, y_centers, x_faces_u, y_faces_v)
+    N_y, N_x_plus = size(u)
+    N_y_plus, N_x = size(v)
+    
+    # Exemple : vortex centré au milieu du domaine
+    x_c, y_c = 0.5, 0.5  # Centre du vortex
+    
+    # Initialiser u (vitesse horizontale)
+    for j in 1:N_y, i in 1:N_x_plus
+        x = x_faces_u[i]
+        y = y_centers[j]
+        r2 = (x - x_c)^2 + (y - y_c)^2
+        u[j, i] = -(y - y_c) * exp(-20 * r2)  # Rotation autour du centre
+    end
+    
+    # Initialiser v (vitesse verticale)
+    for j in 1:N_y_plus, i in 1:N_x
+        x = x_centers[i]
+        y = y_faces_v[j]
+        r2 = (x - x_c)^2 + (y - y_c)^2
+        v[j, i] = (x - x_c) * exp(-20 * r2)  # Rotation autour du centre
+    end
+end
 
 ####################################################################################################################
 # Pour l'instant, on va juste discrétiser les grilles de pression et de vitesse pour un domaine 2D.
@@ -9,12 +52,30 @@
 N_x, N_y = 50, 50  # Nombre cellules pression
 L_x, L_y = 1.0, 1.0  # Dimensions domaine
 
+# Espacement grille
+Dx = L_x / N_x
+Dy = L_y / N_y
+
 # Grilles pression 
 P = zeros(N_y, N_x)
 
 # Grilles vitesse (décalées)
 u = zeros(N_y, N_x + 1)  
 v = zeros(N_y + 1, N_x) 
+
+# Centres
+x_centers = range(Dx/2, L_x - Dx/2, length=N_x)
+y_centers = range(Dy/2, L_y - Dy/2, length=N_y)
+x_faces_u = range(0.0, L_x, length=N_x+1)  # Faces pour u
+y_faces_v = range(0.0, L_y, length=N_y+1)  # Faces pour v
+
+
+# Initialisation
+initialize_velocity!(u, v, x_centers, y_centers, x_faces_u, y_faces_v)
+
+# Appliquer conditions aux limites
+apply_periodic_u!(u)
+apply_periodic_v!(v)
 
 ####################################################################################################################
 # Maintenant, on va interpoler les vitesses aux faces. 
@@ -32,9 +93,11 @@ v_face_x[:, 2:end-1] = 0.5 * (v[:, 2:end] + v[:, 1:end-1])  # Moyenne entre v[i]
 # Maintenant, on calcule ∂u/∂x et ∂v/∂y aux faces.
 ####################################################################################################################
 
-# Espacement grille
-Dx = L_x / N_x
-Dy = L_y / N_y
+##       v[j+1,i]
+##           |
+##   u[j,i]--+--u[j,i+1]
+##           |
+##        v[j,i]
 
 # ∂u/∂x 
 dudx = zeros(N_y, N_x)
@@ -51,3 +114,10 @@ dvdx[:, 2:end-1] = (v[:, 2:end] - v[:, 1:end-1]) / Dx
 # ∂v/∂y
 dvdy = zeros(N_y, N_x)
 dvdy[:, :] = (v[2:end, :] - v[1:end-1, :]) / Dy
+
+
+
+display(dudx)
+display(dudy)
+display(dvdx)
+display(dvdy)
