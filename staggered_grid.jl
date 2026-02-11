@@ -113,12 +113,18 @@ function interpolated_gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, 
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
 
+    # Étape 1 — gradients normaux aux centres de cellules
+    #   du/dx = (u_E - u_W)/dx, dv/dy = (v_N - v_S)/dy
     du_dx_center, dv_dy_center = center_normal_gradients(u, v, dx, dy)
+    # Étape 2 — interpolation centre -> faces pour placer les dérivées
+    # sur les maillages où les flux seront évalués.
     du_dx_xfaces = interpolate_center_to_xfaces(du_dx_center)
     du_dx_yfaces = interpolate_center_to_yfaces(du_dx_center)
     dv_dy_xfaces = interpolate_center_to_xfaces(dv_dy_center)
     dv_dy_yfaces = interpolate_center_to_yfaces(dv_dy_center)
 
+    # Étape 3 — reconstruction des vitesses au centre pour calculer
+    # les dérivées croisées du/dy et dv/dx.
     uc = u_to_centers(u)
     vc = v_to_centers(v)
 
@@ -176,6 +182,8 @@ For `v`:
 - `Fy_vdiff = ν * (dv/dy)|yface * ΔSy`, with `ΔSy = dx`
 """
 function diffusive_fluxes(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dx::Real, dy::Real)
+    # Loi de diffusion (type Fick/Newton) : flux = ν * gradient * surface.
+    # Ici dSx = dy sur faces x et dSy = dx sur faces y.
     grads = interpolated_gradients(u, v, dx, dy)
 
     Fx_udiff = ν .* grads.du_dx_xfaces .* dy
@@ -228,6 +236,9 @@ end
 
 """Intermediate velocity (predictor): `u* = u + Δt ν ∇²u`, `v* = v + Δt ν ∇²v`."""
 function intermediate_velocity(u::AbstractMatrix, v::AbstractMatrix, ν::Real, dt::Real, dx::Real, dy::Real)
+    # Étape prédicteur explicite (sans pression) :
+    #   u* = u^n + dt * ν * ∇²u^n
+    #   v* = v^n + dt * ν * ∇²v^n
     u_star = u .+ dt .* ν .* _laplacian_u(u, dx, dy)
     v_star = v .+ dt .* ν .* _laplacian_v(v, dx, dy)
     return u_star, v_star
@@ -246,6 +257,9 @@ with homogeneous Neumann boundaries and pressure gauge `p[1,1] = 0`.
 """
 function solve_pressure_poisson(rhs::AbstractMatrix, dx::Real, dy::Real;
     maxiter::Int = 2000, tol::Real = 1e-8)
+    # On résout ∇²p = rhs par itérations de Gauss-Seidel.
+    # Les bords utilisent ici une extension au plus proche voisin
+    # (équivalent pratique à un gradient normal nul dans ce schéma simple).
     Nx, Ny = size(rhs)
     p = zeros(float(eltype(rhs)), Nx, Ny)
     idx2 = 1 / dx^2
@@ -256,7 +270,8 @@ function solve_pressure_poisson(rhs::AbstractMatrix, dx::Real, dy::Real;
 
         for j in 1:Ny, i in 1:Nx
             if i == 1 && j == 1
-                continue # pressure gauge
+                # Jauge de pression : fixe la constante arbitraire de p.
+                continue
             end
 
             p_w = p[max(i - 1, 1), j]
@@ -282,6 +297,8 @@ Projection step:
 """
 function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::AbstractMatrix,
     ρ::Real, dt::Real, dx::Real, dy::Real)
+    # Étape de projection : on retranche le gradient de pression
+    # pour imposer (numériquement) une vitesse finale faiblement divergente.
     Nx, Ny = size(p)
     _check_sizes(u_star, v_star, Nx, Ny)
 
@@ -345,6 +362,8 @@ Returned arrays are face-located:
 - `Fx_vconv (Nx+1,Ny)`, `Fy_vconv (Nx,Ny+1)`
 """
 function convective_fluxes(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
+    # Flux convectifs quadratiques : F = (vitesse advectante) * (quantité transportée) * surface.
+    # Les champs sont interpolés vers les faces pour respecter la géométrie MAC.
     Nx = size(v, 1)
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
@@ -374,6 +393,8 @@ end
 
 """Finite-volume divergence from face fluxes to cell centers `(Nx,Ny)`."""
 function flux_divergence(Fx::AbstractMatrix, Fy::AbstractMatrix, dx::Real, dy::Real)
+    # Divergence volumes finis :
+    #   div(F) = (F_e - F_w)/dx + (F_n - F_s)/dy
     Nx = size(Fx, 1) - 1
     Ny = size(Fy, 2) - 1
     size(Fx, 2) == Ny || throw(ArgumentError("Fx must have size (Nx+1, Ny)"))
@@ -413,6 +434,9 @@ function intermediate_velocity_flux_form(
     dy::Real,
     Δt::Real,
 )
+    # Formulation conservation explicite :
+    #   u* = u^n - dt * div(F_conv - F_diff)
+    #   v* = v^n - dt * div(F_conv - F_diff)
     conv = convective_fluxes(u, v, dx, dy)
     diff = diffusive_fluxes(u, v, ν, dx, dy)
 
@@ -444,6 +468,14 @@ function _print_matrix(name::AbstractString, A::AbstractMatrix)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
+    # ---------------------------
+    # Cas de démonstration :
+    # 1) construction d'un état initial
+    # 2) calcul des opérateurs/flux
+    # 3) étape prédicteur
+    # 4) Poisson pression
+    # 5) projection finale
+    # ---------------------------
     Nx, Ny = 4, 3
     dx, dy = 0.5, 0.25
     ν = 1e-2
