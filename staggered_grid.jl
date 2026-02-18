@@ -11,7 +11,8 @@ using Printf
 using Plots
 
 Nx, Ny = 5,5
-dx, dy = 0.5, 0.5
+dx, dy = 0.01, 0.1
+dt =0.01
 
 p = zeros(Nx, Ny)
 u = zeros(Nx + 1, Ny)
@@ -30,9 +31,9 @@ end
 """Apply no-slip wall conditions on all domain borders (all boundary face velocities set to zero)."""
 function apply_wall_boundaries!(u::AbstractMatrix, v::AbstractMatrix)
     u[1, :] .= 0.0
-    u[end, :] .= 0.0
+    u[end, :] .= 1.0
     u[:, 1] .= 0.0
-    u[:, end] .= 1.0
+    u[:, end] .= 0.0
 
     v[:, 1] .= 0.0
     v[:, end] .= 0.0
@@ -54,8 +55,8 @@ function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
 
-    
-
+    u, v = with_wall_boundaries(u, v)
+    println(u,v)
     du_dx = similar(float.(u), Nx, Ny)
     dv_dy = similar(float.(v), Nx, Ny)
     du_dy = similar(float.(u), Nx, Ny)
@@ -64,6 +65,7 @@ function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
     for j in 1:Ny, i in 1:Nx
         du_dx[i, j] = (u[i + 1, j] - u[i, j]) / dx
         dv_dy[i, j] = (v[i, j + 1] - v[i, j]) / dy
+        print(v[i, j + 1] , v[i, j])
         du_dy[i, j] = (u[i + 1, j] - u[i, j]) / dy
         dv_dx[i, j] = (v[i, j + 1] - v[i, j]) / dx
     end
@@ -78,7 +80,6 @@ end
 
 
 function diffusive_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, nu::Real)
-    u, v = with_wall_boundaries(u, v)
     du_dx, dv_dy, du_dy, dv_dx = gradients(u, v, dx, dy)
     flux_diff_u_x = nu * du_dx * dy
     flux_diff_u_y = nu * du_dy * dx
