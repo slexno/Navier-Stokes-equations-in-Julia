@@ -129,12 +129,11 @@ contourf(flux_diff_u_y', xlabel="x", ylabel="y",
 # Time evolution of diffusive flux
 # ================================
 
-Nt = 1000  # number of time steps
+Nt = 100  # number of time steps
 
 # Fix plotting scales over time so the animation does not auto-rescale
 flux0_u_x, _, _, _ = diffusive_flux(u, v, dx, dy, nu)
-flux_absmax = maximum(abs, flux0_u_x)
-flux_absmax = flux_absmax == 0 ? 1.0 : flux_absmax
+
 
 
 
@@ -161,13 +160,13 @@ anim = @animate for n in 1:Nt
              color=:viridis,
              xlims=(1, Nx),
              ylims=(1, Ny),
-             clims=(-flux_absmax, flux_absmax))
+             clims=(-20, 20))
 end
 
 
 gif(anim,
     "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_time.gif",
-    fps=30)
+    fps=15)
 
 @info "Animation saved → diffusive_flux_time.gif"
 
