@@ -105,15 +105,40 @@ end
 
 
 """
-Advance one explicit diffusion step on MAC-grid velocities.
+Compute per-cell diffusive face flux balance for u:
 
-- u is diffused on `(Nx+1, Ny)` x-faces
-- v is diffused on `(Nx, Ny+1)` y-faces
+F_sum = F_top + F_right - F_bottom - F_left
 
-Boundary choices used here:
-- left u boundary is kept fixed (Dirichlet inlet)
-- other boundaries are copied from adjacent interior values (homogeneous Neumann)
+with
+- F_top    = ν (∂u/∂y)_top    * dx
+- F_bottom = ν (∂u/∂y)_bottom * dx
+- F_right  = ν (∂u/∂x)_right  * dy
+- F_left   = ν (∂u/∂x)_left   * dy
 """
+function diffusive_flux_sum_u(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, nu::Real)
+    du_dx, _, du_dy, _ = gradients(u, v, dx, dy)
+    Nx, Ny = size(du_dx)
+
+    F_top = zeros(Nx, Ny)
+    F_right = zeros(Nx, Ny)
+    F_bottom = zeros(Nx, Ny)
+    F_left = zeros(Nx, Ny)
+    F_sum = zeros(Nx, Ny)
+
+    for j in 1:Ny, i in 1:Nx
+        F_right[i, j] = nu * du_dx[i, j] * dy
+        F_left[i, j] = nu * (i == 1 ? du_dx[i, j] : du_dx[i - 1, j]) * dy
+
+        F_top[i, j] = nu * du_dy[i, j] * dx
+        F_bottom[i, j] = nu * (j == 1 ? du_dy[i, j] : du_dy[i, j - 1]) * dx
+
+        F_sum[i, j] = F_top[i, j] + F_right[i, j] - F_bottom[i, j] - F_left[i, j]
+    end
+
+    return F_sum, F_top, F_right, F_bottom, F_left
+end
+
+
 function diffuse_velocity_step!(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, dt::Real, nu::Real)
     Nx = size(v, 1)
     Ny = size(u, 2)
@@ -155,10 +180,11 @@ end
 
 
 flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v, dx, dy, nu)
+flux_sum_u, _, _, _, _ = diffusive_flux_sum_u(u, v, dx, dy, nu)
 
 # Plot contourf
-p = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
-             title="Diffusive Flux (u-x direction)", color=:viridis)
+p = contourf(flux_sum_u', xlabel="x", ylabel="y",
+             title="Sum of diffusive face fluxes for u", color=:viridis)
 
 savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_contour.png")
 @info "Figure saved → diffusive_flux_contour.png"
@@ -181,26 +207,27 @@ u[1, :] .= 1.0
 # Plot at first iteration (t = dt)
 first_flux_diff_u_x, first_flux_diff_u_y, first_flux_diff_v_x, first_flux_diff_v_y =
     diffusive_flux(u, v, dx, dy, nu)
+first_flux_sum_u, _, _, _, _ = diffusive_flux_sum_u(u, v, dx, dy, nu)
 
-p_first = contourf(first_flux_diff_u_x', xlabel="x", ylabel="y",
-                   title="Diffusive Flux u-x (iteration 1)", color=:viridis)
+p_first = contourf(first_flux_sum_u', xlabel="x", ylabel="y",
+                   title="Sum of diffusive face fluxes for u (iteration 1)", color=:viridis)
 savefig(p_first, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_iteration1.png")
 @info "Figure saved → diffusive_flux_iteration1.png"
 
 
 # Fix color scale across all frames (avoids visual masking when values evolve)
 umin, umax = let
-    umin_local = minimum(first_flux_diff_u_x)
-    umax_local = maximum(first_flux_diff_u_x)
+    umin_local = minimum(first_flux_sum_u)
+    umax_local = maximum(first_flux_sum_u)
 
     u_tmp = copy(u)
     v_tmp = copy(v)
     for _ in 1:Nt
         u_tmp[1, :] .= 1.0
         diffuse_velocity_step!(u_tmp, v_tmp, dx, dy, dt, nu)
-        fx_tmp, _, _, _ = diffusive_flux(u_tmp, v_tmp, dx, dy, nu)
-        umin_local = min(umin_local, minimum(fx_tmp))
-        umax_local = max(umax_local, maximum(fx_tmp))
+        fsum_tmp, _, _, _, _ = diffusive_flux_sum_u(u_tmp, v_tmp, dx, dy, nu)
+        umin_local = min(umin_local, minimum(fsum_tmp))
+        umax_local = max(umax_local, maximum(fsum_tmp))
     end
 
     (umin_local, umax_local)
@@ -218,11 +245,13 @@ anim = @animate for n in 1:Nt
 
     flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y =
         diffusive_flux(u, v, dx, dy, nu)
+    flux_sum_u, _, _, _, _ =
+        diffusive_flux_sum_u(u, v, dx, dy, nu)
 
     diffuse_velocity_step!(u, v, dx, dy, dt, nu)
 
-    p1 = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
-                  title="Diffusive Flux u-x (t = $(round(n*dt, digits=4)))",
+    p1 = contourf(flux_sum_u', xlabel="x", ylabel="y",
+                  title="F_top + F_right - F_bottom - F_left (t = $(round(n*dt, digits=4)))",
                   color=:viridis, clims=(umin, umax))
     p2 = contourf(flux_diff_u_y', xlabel="x", ylabel="y", title="Diffusive Flux u-y", color=:viridis)
     p3 = contourf(flux_diff_v_x', xlabel="x", ylabel="y", title="Diffusive Flux v-x", color=:viridis)
