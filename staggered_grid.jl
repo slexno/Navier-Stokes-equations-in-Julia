@@ -104,6 +104,55 @@ function diffusive_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real
 end
 
 
+"""
+Advance one explicit diffusion step on MAC-grid velocities.
+
+- u is diffused on `(Nx+1, Ny)` x-faces
+- v is diffused on `(Nx, Ny+1)` y-faces
+
+Boundary choices used here:
+- left u boundary is kept fixed (Dirichlet inlet)
+- other boundaries are copied from adjacent interior values (homogeneous Neumann)
+"""
+function diffuse_velocity_step!(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, dt::Real, nu::Real)
+    Nx = size(v, 1)
+    Ny = size(u, 2)
+    _check_sizes(u, v, Nx, Ny)
+
+    un = copy(u)
+    vn = copy(v)
+
+    inv_dx2 = 1.0 / dx^2
+    inv_dy2 = 1.0 / dy^2
+
+    # Diffusion on u faces (interior in x: 2..Nx, in y: 2..Ny-1)
+    for j in 2:Ny-1, i in 2:Nx
+        lap_u = (un[i + 1, j] - 2.0 * un[i, j] + un[i - 1, j]) * inv_dx2 +
+                (un[i, j + 1] - 2.0 * un[i, j] + un[i, j - 1]) * inv_dy2
+        u[i, j] = un[i, j] + dt * nu * lap_u
+    end
+
+    # Diffusion on v faces (interior in x: 2..Nx-1, in y: 2..Ny)
+    for j in 2:Ny, i in 2:Nx-1
+        lap_v = (vn[i + 1, j] - 2.0 * vn[i, j] + vn[i - 1, j]) * inv_dx2 +
+                (vn[i, j + 1] - 2.0 * vn[i, j] + vn[i, j - 1]) * inv_dy2
+        v[i, j] = vn[i, j] + dt * nu * lap_v
+    end
+
+    # Neumann-like copies on non-inlet boundaries
+    u[end, :] .= u[end - 1, :]
+    u[:, 1] .= u[:, 2]
+    u[:, end] .= u[:, end - 1]
+
+    v[1, :] .= v[2, :]
+    v[end, :] .= v[end - 1, :]
+    v[:, 1] .= v[:, 2]
+    v[:, end] .= v[:, end - 1]
+
+    return nothing
+end
+
+
 
 flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v, dx, dy, nu)
 
@@ -139,6 +188,21 @@ savefig(p_first, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\
 @info "Figure saved → diffusive_flux_iteration1.png"
 
 
+# Fix color scale across all frames (avoids visual masking when values evolve)
+umin = minimum(first_flux_diff_u_x)
+umax = maximum(first_flux_diff_u_x)
+
+u_tmp = copy(u)
+v_tmp = copy(v)
+for _ in 1:Nt
+    u_tmp[1, :] .= 1.0
+    diffuse_velocity_step!(u_tmp, v_tmp, dx, dy, dt, nu)
+    fx_tmp, _, _, _ = diffusive_flux(u_tmp, v_tmp, dx, dy, nu)
+    umin = min(umin, minimum(fx_tmp))
+    umax = max(umax, maximum(fx_tmp))
+end
+
+
 
 
 
@@ -151,12 +215,11 @@ anim = @animate for n in 1:Nt
     flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y =
         diffusive_flux(u, v, dx, dy, nu)
 
-    u[2:Nx, :] .+= dt .* flux_diff_u_x[1:Nx-1, :]
-    v[:, 2:Ny] .+= dt .* flux_diff_v_y[:, 1:Ny-1]
+    diffuse_velocity_step!(u, v, dx, dy, dt, nu)
 
     p1 = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
                   title="Diffusive Flux u-x (t = $(round(n*dt, digits=4)))",
-                  color=:viridis)
+                  color=:viridis, clims=(umin, umax))
     p2 = contourf(flux_diff_u_y', xlabel="x", ylabel="y", title="Diffusive Flux u-y", color=:viridis)
     p3 = contourf(flux_diff_v_x', xlabel="x", ylabel="y", title="Diffusive Flux v-x", color=:viridis)
     p4 = contourf(flux_diff_v_y', xlabel="x", ylabel="y", title="Diffusive Flux v-y", color=:viridis)
