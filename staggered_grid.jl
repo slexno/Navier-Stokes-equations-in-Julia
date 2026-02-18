@@ -28,42 +28,6 @@ function _check_sizes(u, v, Nx::Int, Ny::Int)
 end
 
 
-"""Apply no-slip wall conditions on all domain borders (all boundary face velocities set to zero)."""
-function apply_wall_boundaries!(u::AbstractMatrix, v::AbstractMatrix)
-
-    # Left boundary
-    u[1, :] .= 0.0
-
-    # Right boundary
-    u[end, :] .= 0.0
-
-    # Bottom boundary
-    u[:, 1] .= 0.0
-
-    # Top boundary → impose u = 1
-    u[:, end] .= 1.0
-
-    # No-slip for v everywhere
-    v[:, 1] .= 0.0
-    v[:, end] .= 0.0
-    v[1, :] .= 0.0
-    v[end, :] .= 0.0
-
-    return u, v
-end
-
-
-"""Return copies of `(u, v)` that satisfy wall boundary conditions on all borders."""
-function with_wall_boundaries(u::AbstractMatrix, v::AbstractMatrix)
-    uw = copy(float.(u))
-    vw = copy(float.(v))
-    apply_wall_boundaries!(uw, vw)
-    return uw, vw
-end
-
-
-
-
 function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
     Nx = size(v, 1)
     Ny = size(u, 2)
@@ -75,10 +39,22 @@ function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
     dv_dx = similar(float.(v), Nx, Ny)
 
     for j in 1:Ny, i in 1:Nx
-        du_dx[i, j] = (u[i + 1, j] - u[i, j]) / dx
-        dv_dy[i, j] = (v[i, j + 1] - v[i, j]) / dy
-        du_dy[i, j] = (u[i + 1, j] - u[i, j]) / dy
-        dv_dx[i, j] = (v[i, j + 1] - v[i, j]) / dx
+        border_factor = (i == 1 || i == Nx || j == 1 || j == Ny) ? 2.0 : 1.0
+
+        du_dx[i, j] = border_factor * (u[i + 1, j] - u[i, j]) / dx
+        dv_dy[i, j] = border_factor * (v[i, j + 1] - v[i, j]) / dy
+
+        if j < Ny
+            du_dy[i, j] = border_factor * (u[i, j + 1] - u[i, j]) / dy
+        else
+            du_dy[i, j] = border_factor * (u[i, j] - u[i, j - 1]) / dy
+        end
+
+        if i < Nx
+            dv_dx[i, j] = border_factor * (v[i + 1, j] - v[i, j]) / dx
+        else
+            dv_dx[i, j] = border_factor * (v[i, j] - v[i - 1, j]) / dx
+        end
     end
 
     return du_dx, dv_dy, du_dy, dv_dx
@@ -98,11 +74,29 @@ function diffusive_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real
     flux_diff_v_y = zeros(Nx, Ny)
 
     # Divergence of diffusive flux (i.e. Laplacian reconstruction)
-    for j in 2:Ny-1, i in 2:Nx-1
-        flux_diff_u_x[i,j] = nu * (du_dx[i,j] - du_dx[i-1,j]) / dx
-        flux_diff_u_y[i,j] = nu * (du_dy[i,j] - du_dy[i,j-1]) / dy
-        flux_diff_v_x[i,j] = nu * (dv_dx[i,j] - dv_dx[i-1,j]) / dx
-        flux_diff_v_y[i,j] = nu * (dv_dy[i,j] - dv_dy[i,j-1]) / dy
+    for j in 1:Ny, i in 1:Nx
+        border_factor = (i == 1 || i == Nx || j == 1 || j == Ny) ? 2.0 : 1.0
+
+        dudx_x = i == 1  ? (du_dx[i + 1, j] - du_dx[i, j]) / dx :
+                 i == Nx ? (du_dx[i, j] - du_dx[i - 1, j]) / dx :
+                           (du_dx[i, j] - du_dx[i - 1, j]) / dx
+
+        dudy_y = j == 1  ? (du_dy[i, j + 1] - du_dy[i, j]) / dy :
+                 j == Ny ? (du_dy[i, j] - du_dy[i, j - 1]) / dy :
+                           (du_dy[i, j] - du_dy[i, j - 1]) / dy
+
+        dvdx_x = i == 1  ? (dv_dx[i + 1, j] - dv_dx[i, j]) / dx :
+                 i == Nx ? (dv_dx[i, j] - dv_dx[i - 1, j]) / dx :
+                           (dv_dx[i, j] - dv_dx[i - 1, j]) / dx
+
+        dvdy_y = j == 1  ? (dv_dy[i, j + 1] - dv_dy[i, j]) / dy :
+                 j == Ny ? (dv_dy[i, j] - dv_dy[i, j - 1]) / dy :
+                           (dv_dy[i, j] - dv_dy[i, j - 1]) / dy
+
+        flux_diff_u_x[i,j] = nu * border_factor * dudx_x
+        flux_diff_u_y[i,j] = nu * border_factor * dudy_y
+        flux_diff_v_x[i,j] = nu * border_factor * dvdx_x
+        flux_diff_v_y[i,j] = nu * border_factor * dvdy_y
     end
 
     return flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y
@@ -116,7 +110,7 @@ flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v
 p = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
              title="Diffusive Flux (u-x direction)", color=:viridis)
 
-savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_contour.png")
+savefig(p, "diffusive_flux_contour.png")
 @info "Figure saved → diffusive_flux_contour.png"
 
 contourf(flux_diff_u_y', xlabel="x", ylabel="y",
@@ -129,7 +123,10 @@ contourf(flux_diff_u_y', xlabel="x", ylabel="y",
 # Time evolution of diffusive flux
 # ================================
 
-Nt = 1000  # number of time steps
+Nt = 200  # number of time steps
+
+# Inlet (départ) at left wall
+u[1, :] .= 1.0
 
 
 
@@ -138,27 +135,25 @@ Nt = 1000  # number of time steps
 anim = @animate for n in 1:Nt
     global u, v   # <-- FIX
 
-    u, v = with_wall_boundaries(u, v)
-
     flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y =
         diffusive_flux(u, v, dx, dy, nu)
 
     u[2:Nx, :] .+= dt .* flux_diff_u_x[1:Nx-1, :]
     v[:, 2:Ny] .+= dt .* flux_diff_v_y[:, 1:Ny-1]
 
+    p1 = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
+                  title="Diffusive Flux u-x (t = $(round(n*dt, digits=4)))",
+                  color=:viridis)
+    p2 = contourf(flux_diff_u_y', xlabel="x", ylabel="y", title="Diffusive Flux u-y", color=:viridis)
+    p3 = contourf(flux_diff_v_x', xlabel="x", ylabel="y", title="Diffusive Flux v-x", color=:viridis)
+    p4 = contourf(flux_diff_v_y', xlabel="x", ylabel="y", title="Diffusive Flux v-y", color=:viridis)
 
-
-
-    contourf(flux_diff_u_x',
-             xlabel="x",
-             ylabel="y",
-             title="Diffusive Flux u-x (t = $(round(n*dt, digits=3)))",
-             color=:viridis)
+    plot(p1, p2, p3, p4, layout=(2, 2), size=(900, 700))
 end
 
 
 gif(anim,
-    "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_time.gif",
+    "diffusive_flux_time.gif",
     fps=30)
 
 @info "Animation saved → diffusive_flux_time.gif"
@@ -337,5 +332,4 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
     
     return u_new, v_new
 end
-
 
