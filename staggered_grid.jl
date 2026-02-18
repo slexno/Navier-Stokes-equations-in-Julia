@@ -131,6 +131,11 @@ contourf(flux_diff_u_y', xlabel="x", ylabel="y",
 
 Nt = 1000  # number of time steps
 
+# Fix plotting scales over time so the animation does not auto-rescale
+flux0_u_x, _, _, _ = diffusive_flux(u, v, dx, dy, nu)
+flux_absmax = maximum(abs, flux0_u_x)
+flux_absmax = flux_absmax == 0 ? 1.0 : flux_absmax
+
 
 
 
@@ -153,7 +158,10 @@ anim = @animate for n in 1:Nt
              xlabel="x",
              ylabel="y",
              title="Diffusive Flux u-x (t = $(round(n*dt, digits=3)))",
-             color=:viridis)
+             color=:viridis,
+             xlims=(1, Nx),
+             ylims=(1, Ny),
+             clims=(-flux_absmax, flux_absmax))
 end
 
 
@@ -337,5 +345,4 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
     
     return u_new, v_new
 end
-
 
