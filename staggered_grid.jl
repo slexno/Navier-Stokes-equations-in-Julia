@@ -189,17 +189,21 @@ savefig(p_first, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\
 
 
 # Fix color scale across all frames (avoids visual masking when values evolve)
-umin = minimum(first_flux_diff_u_x)
-umax = maximum(first_flux_diff_u_x)
+umin, umax = let
+    umin_local = minimum(first_flux_diff_u_x)
+    umax_local = maximum(first_flux_diff_u_x)
 
-u_tmp = copy(u)
-v_tmp = copy(v)
-for _ in 1:Nt
-    u_tmp[1, :] .= 1.0
-    diffuse_velocity_step!(u_tmp, v_tmp, dx, dy, dt, nu)
-    fx_tmp, _, _, _ = diffusive_flux(u_tmp, v_tmp, dx, dy, nu)
-    umin = min(umin, minimum(fx_tmp))
-    umax = max(umax, maximum(fx_tmp))
+    u_tmp = copy(u)
+    v_tmp = copy(v)
+    for _ in 1:Nt
+        u_tmp[1, :] .= 1.0
+        diffuse_velocity_step!(u_tmp, v_tmp, dx, dy, dt, nu)
+        fx_tmp, _, _, _ = diffusive_flux(u_tmp, v_tmp, dx, dy, nu)
+        umin_local = min(umin_local, minimum(fx_tmp))
+        umax_local = max(umax_local, maximum(fx_tmp))
+    end
+
+    (umin_local, umax_local)
 end
 
 
