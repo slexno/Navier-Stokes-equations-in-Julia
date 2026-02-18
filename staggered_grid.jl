@@ -10,9 +10,9 @@ Grid arrangement:
 using Printf
 using Plots
 
-Nx, Ny = 5,5
+Nx, Ny = 20,20
 dx, dy = 0.01, 0.1
-dt =0.00001
+dt =0.0001
 
 p = zeros(Nx, Ny)
 u = zeros(Nx + 1, Ny)
@@ -142,7 +142,7 @@ end
 
 gif(anim,
     "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_time.gif",
-    fps=30)
+    fps=20)
 
 @info "Animation saved → diffusive_flux_time.gif"
 
