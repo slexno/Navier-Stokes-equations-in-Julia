@@ -88,7 +88,115 @@ function diffusive_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real
     return flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y
 end
 
+"""
+Advance the velocity field by one explicit diffusion-only step.
+
+The momentum equations are simplified to:
+    ∂u/∂t = ν ∇²u
+    ∂v/∂t = ν ∇²v
+"""
+function diffusion_step(
+    u::AbstractMatrix,
+    v::AbstractMatrix,
+    dx::Real,
+    dy::Real,
+    nu::Real,
+    dt::Real,
+)
+    Nx = size(v, 1)
+    Ny = size(u, 2)
+    _check_sizes(u, v, Nx, Ny)
+
+    un = copy(float.(u))
+    vn = copy(float.(v))
+
+    # u-faces: i = 2:Nx, j = 2:Ny-1
+    for j in 2:Ny-1
+        for i in 2:Nx
+            d2u_dx2 = (u[i + 1, j] - 2u[i, j] + u[i - 1, j]) / dx^2
+            d2u_dy2 = (u[i, j + 1] - 2u[i, j] + u[i, j - 1]) / dy^2
+            un[i, j] = u[i, j] + dt * nu * (d2u_dx2 + d2u_dy2)
+        end
+    end
+
+    # v-faces: i = 2:Nx-1, j = 2:Ny
+    for j in 2:Ny
+        for i in 2:Nx-1
+            d2v_dx2 = (v[i + 1, j] - 2v[i, j] + v[i - 1, j]) / dx^2
+            d2v_dy2 = (v[i, j + 1] - 2v[i, j] + v[i, j - 1]) / dy^2
+            vn[i, j] = v[i, j] + dt * nu * (d2v_dx2 + d2v_dy2)
+        end
+    end
+
+    apply_wall_boundaries!(un, vn)
+    return un, vn
+end
+
+"""
+Compute the temporal evolution of diffusive fluxes on a staggered grid.
+
+Returns a named tuple containing:
+- `times`: saved time values
+- `flux_diff_u_x`, `flux_diff_u_y`, `flux_diff_v_x`, `flux_diff_v_y`: vectors of flux fields
+- `u`, `v`: final velocity fields after `N` iterations
+"""
+function diffusive_flux_time_series(
+    u0::AbstractMatrix,
+    v0::AbstractMatrix,
+    dx::Real,
+    dy::Real,
+    nu::Real,
+    dt::Real,
+    N::Integer;
+    store_every::Integer = 1,
+)
+    store_every > 0 || throw(ArgumentError("store_every must be >= 1"))
+    N >= 0 || throw(ArgumentError("N must be >= 0"))
+
+    u = copy(float.(u0))
+    v = copy(float.(v0))
+    apply_wall_boundaries!(u, v)
+
+    nsave = fld(N, store_every) + 1
+    times = Vector{Float64}(undef, nsave)
+    flux_diff_u_x_hist = Vector{Matrix{Float64}}(undef, nsave)
+    flux_diff_u_y_hist = Vector{Matrix{Float64}}(undef, nsave)
+    flux_diff_v_x_hist = Vector{Matrix{Float64}}(undef, nsave)
+    flux_diff_v_y_hist = Vector{Matrix{Float64}}(undef, nsave)
+
+    save_idx = 1
+    times[save_idx] = 0.0
+    flux_diff_u_x_hist[save_idx], flux_diff_u_y_hist[save_idx],
+    flux_diff_v_x_hist[save_idx], flux_diff_v_y_hist[save_idx] = diffusive_flux(u, v, dx, dy, nu)
+
+    for n in 1:N
+        u, v = diffusion_step(u, v, dx, dy, nu, dt)
+
+        if n % store_every == 0
+            save_idx += 1
+            times[save_idx] = n * dt
+            flux_diff_u_x_hist[save_idx], flux_diff_u_y_hist[save_idx],
+            flux_diff_v_x_hist[save_idx], flux_diff_v_y_hist[save_idx] = diffusive_flux(u, v, dx, dy, nu)
+        end
+    end
+
+    return (
+        times = times,
+        flux_diff_u_x = flux_diff_u_x_hist,
+        flux_diff_u_y = flux_diff_u_y_hist,
+        flux_diff_v_x = flux_diff_v_x_hist,
+        flux_diff_v_y = flux_diff_v_y_hist,
+        u = u,
+        v = v,
+    )
+end
+
 flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v, dx, dy, nu)
+
+# Temporal solution request: dt with N = 10_000 iterations
+N = 10_000
+diffusive_history = diffusive_flux_time_series(u, v, dx, dy, nu, dt, N; store_every = 100)
+@info "Stored $(length(diffusive_history.times)) diffusive-flux snapshots up to t=$(diffusive_history.times[end]) s"
 
 # Plot contourf
 p = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
@@ -272,5 +380,4 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
     
     return u_new, v_new
 end
-
 
