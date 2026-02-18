@@ -32,7 +32,7 @@ function apply_wall_boundaries!(u::AbstractMatrix, v::AbstractMatrix)
     u[1, :] .= 0.0
     u[end, :] .= 0.0
     u[:, 1] .= 0.0
-    u[:, end] .= 0.0
+    u[:, end] .= 1.0
 
     v[:, 1] .= 0.0
     v[:, end] .= 0.0
@@ -53,6 +53,8 @@ function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
     Nx = size(v, 1)
     Ny = size(u, 2)
     _check_sizes(u, v, Nx, Ny)
+
+    
 
     du_dx = similar(float.(u), Nx, Ny)
     dv_dy = similar(float.(v), Nx, Ny)
@@ -76,6 +78,7 @@ end
 
 
 function diffusive_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, nu::Real)
+    u, v = with_wall_boundaries(u, v)
     du_dx, dv_dy, du_dy, dv_dx = gradients(u, v, dx, dy)
     flux_diff_u_x = nu * du_dx * dy
     flux_diff_u_y = nu * du_dy * dx
@@ -95,6 +98,8 @@ savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffu
 
 contourf(flux_diff_u_y', xlabel="x", ylabel="y",
          title="Diffusive Flux (u-y direction)", color=:viridis)
+
+
 
 """
 Compute convective fluxes on a 2D staggered (MAC) grid.
@@ -152,6 +157,37 @@ function convective_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Rea
 
     return flux_conv_x_u, flux_conv_y_u, flux_conv_x_v, flux_conv_y_v
 end
+
+
+flux_conv_x_u, flux_conv_y_u, flux_conv_x_v, flux_conv_y_v = convective_flux(u, v, dx, dy)
+
+# Plot contourf
+p = contourf(flux_conv_x_u', xlabel="x", ylabel="y",
+             title="Convective Flux (u-x direction)", color=:viridis)
+
+savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\convective_flux_u_x_contour.png")
+@info "Figure saved → convective_flux_u_x_contour.png"
+
+contourf(flux_conv_y_u', xlabel="x", ylabel="y",
+         title="Convective Flux (u-y direction)", color=:viridis)
+
+savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\convective_flux_u_y_contour.png")
+@info "Figure saved → convective_flux_u_y_contour.png"
+
+contourf(flux_conv_x_v', xlabel="x", ylabel="y",
+         title="Convective Flux (v-x direction)", color=:viridis)
+
+savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\convective_flux_v_x_contour.png")
+@info "Figure saved → convective_flux_v_x_contour.png"
+
+contourf(flux_conv_y_v', xlabel="x", ylabel="y",
+         title="Convective Flux (v-y direction)", color=:viridis)
+
+savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\convective_flux_v_y_contour.png")
+@info "Figure saved → convective_flux_v_y_contour.png"
+
+
+
 
 function intermediate_velocity(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, nu::Real)
     flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v, dx, dy, nu)
