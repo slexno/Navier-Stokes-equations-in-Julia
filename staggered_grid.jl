@@ -7,9 +7,10 @@ Grid arrangement:
 - y-velocity `v`: `(Nx, Ny + 1)` y-normal faces
 """
 
+using Printf
+using Plots
 
-
-Nx, Ny = 3, 3
+Nx, Ny = 5,5
 dx, dy = 0.5, 0.5
 
 p = zeros(Nx, Ny)
@@ -73,6 +74,7 @@ function gradients(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
 end
 
 
+
 function diffusive_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, nu::Real)
     du_dx, dv_dy, du_dy, dv_dx = gradients(u, v, dx, dy)
     flux_diff_u_x = nu * du_dx * dy
@@ -82,6 +84,17 @@ function diffusive_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real
     return flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y
 end
 
+flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v, dx, dy, nu)
+
+# Plot contourf
+p = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
+             title="Diffusive Flux (u-x direction)", color=:viridis)
+
+savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_contour.png")
+@info "Figure saved → diffusive_flux_contour.png"
+
+contourf(flux_diff_u_y', xlabel="x", ylabel="y",
+         title="Diffusive Flux (u-y direction)", color=:viridis)
 
 """
 Compute convective fluxes on a 2D staggered (MAC) grid.
@@ -222,4 +235,5 @@ function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::Abst
     
     return u_new, v_new
 end
+
 
