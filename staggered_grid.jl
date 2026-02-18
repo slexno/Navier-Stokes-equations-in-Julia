@@ -139,6 +139,23 @@ function diffusive_flux_sum_u(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy
 end
 
 
+function apply_velocity_boundary_conditions!(u::AbstractMatrix, v::AbstractMatrix; inlet_u::Real=1.0)
+    # Non-inlet boundaries: homogeneous Neumann (copy adjacent interior values)
+    u[end, :] .= u[end - 1, :]
+    u[:, 1] .= u[:, 2]
+    u[:, end] .= u[:, end - 1]
+
+    v[1, :] .= v[2, :]
+    v[end, :] .= v[end - 1, :]
+    v[:, 1] .= v[:, 2]
+    v[:, end] .= v[:, end - 1]
+
+    # Inlet wall is imposed last so first-cell boundary stays exactly fixed
+    u[1, :] .= inlet_u
+    return nothing
+end
+
+
 function diffuse_velocity_step!(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, dt::Real, nu::Real)
     Nx = size(v, 1)
     Ny = size(u, 2)
@@ -164,15 +181,7 @@ function diffuse_velocity_step!(u::AbstractMatrix, v::AbstractMatrix, dx::Real, 
         v[i, j] = vn[i, j] + dt * nu * lap_v
     end
 
-    # Neumann-like copies on non-inlet boundaries
-    u[end, :] .= u[end - 1, :]
-    u[:, 1] .= u[:, 2]
-    u[:, end] .= u[:, end - 1]
-
-    v[1, :] .= v[2, :]
-    v[end, :] .= v[end - 1, :]
-    v[:, 1] .= v[:, 2]
-    v[:, end] .= v[:, end - 1]
+    apply_velocity_boundary_conditions!(u, v; inlet_u=1.0)
 
     return nothing
 end
@@ -202,7 +211,7 @@ contourf(flux_diff_u_y', xlabel="x", ylabel="y",
 Nt = 200  # number of time steps
 
 # Inlet (départ) at left wall only
-u[1, :] .= 1.0
+apply_velocity_boundary_conditions!(u, v; inlet_u=1.0)
 
 # Plot at first iteration (t = dt)
 first_flux_diff_u_x, first_flux_diff_u_y, first_flux_diff_v_x, first_flux_diff_v_y =
@@ -223,7 +232,7 @@ umin, umax = let
     u_tmp = copy(u)
     v_tmp = copy(v)
     for _ in 1:Nt
-        u_tmp[1, :] .= 1.0
+        apply_velocity_boundary_conditions!(u_tmp, v_tmp; inlet_u=1.0)
         diffuse_velocity_step!(u_tmp, v_tmp, dx, dy, dt, nu)
         fsum_tmp, _, _, _, _ = diffusive_flux_sum_u(u_tmp, v_tmp, dx, dy, nu)
         umin_local = min(umin_local, minimum(fsum_tmp))
@@ -241,7 +250,7 @@ anim = @animate for n in 1:Nt
     global u, v   # <-- FIX
 
     # Keep only the left boundary condition fixed to 1
-    u[1, :] .= 1.0
+    apply_velocity_boundary_conditions!(u, v; inlet_u=1.0)
 
     flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y =
         diffusive_flux(u, v, dx, dy, nu)
