@@ -35,13 +35,13 @@ function apply_wall_boundaries!(u::AbstractMatrix, v::AbstractMatrix)
     u[1, :] .= 0.0
 
     # Right boundary
-    u[end, :] .= 0.0
+    u[end, :] .= 1.0
 
     # Bottom boundary
     u[:, 1] .= 0.0
 
     # Top boundary → impose u = 1
-    u[:, end] .= 1.0
+    u[:, end] .= 0.0
 
     # No-slip for v everywhere
     v[:, 1] .= 0.0
