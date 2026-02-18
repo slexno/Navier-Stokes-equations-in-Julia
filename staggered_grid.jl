@@ -140,55 +140,86 @@ function convective_flux(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Rea
     return flux_conv_x_u, flux_conv_y_u, flux_conv_x_v, flux_conv_y_v
 end
 
-using Plots
+function intermediate_velocity(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real, nu::Real)
+    flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v, dx, dy, nu)
+    flux_conv_x_u, flux_conv_y_u, flux_conv_x_v, flux_conv_y_v = convective_flux(u, v, dx, dy)
 
-"""
-Interpolate staggered (MAC) velocity field to cell centers.
-Returns (uc, vc) of size (Nx, Ny).
-"""
-function interpolate_to_centers(u::AbstractMatrix, v::AbstractMatrix)
-    Nx = size(v, 1)
-    Ny = size(u, 2)
-    _check_sizes(u, v, Nx, Ny)
+    # Compute intermediate velocities (without pressure gradient)
+    u_star = similar(float.(u))
+    v_star = similar(float.(v))
 
-    uc = zeros(Float64, Nx, Ny)
-    vc = zeros(Float64, Nx, Ny)
-
-    for j in 1:Ny
-        for i in 1:Nx
-            uc[i, j] = 0.5 * (u[i, j] + u[i+1, j])
-            vc[i, j] = 0.5 * (v[i, j] + v[i, j+1])
+    for j in 2:size(u, 2)-1
+        for i in 2:size(u, 1)-1
+            u_star[i, j] = u[i, j] + (flux_diff_u_x[i, j] + flux_diff_u_y[i, j]) - (flux_conv_x_u[i, j] + flux_conv_y_u[i, j])
         end
     end
 
-    return uc, vc
+    for j in 2:size(v, 2)-1
+        for i in 2:size(v, 1)-1
+            v_star[i, j] = v[i, j] + (flux_diff_v_x[i, j] + flux_diff_v_y[i, j]) - (flux_conv_x_v[i, j] + flux_conv_y_v[i, j])
+        end
+    end
+
+    return u_star, v_star
 end
 
-"""
-Plot velocity field stored on MAC grid.
-"""
-function plot_velocity_field(u::AbstractMatrix, v::AbstractMatrix, dx::Real, dy::Real)
-    Nx = size(v, 1)
-    Ny = size(u, 2)
-
-    uc, vc = interpolate_to_centers(u, v)
-
-    x = collect(dx/2:dx:(Nx-0.5)*dx)
-    y = collect(dy/2:dy:(Ny-0.5)*dy)
-
-    X = repeat(x', Ny, 1)'
-    Y = repeat(y, 1, Nx)'
-
-    quiver(
-        X, Y,
-        quiver = (uc, vc),
-        xlabel = "x",
-        ylabel = "y",
-        title = "Velocity Field (MAC Grid)",
-        aspect_ratio = :equal,
-        legend = false
-    )
+function solve_poisson_equation_for_pressure(p::AbstractMatrix, rho::AbstractMatrix, dx::Real, dy::Real, u_star, v_star, dt::Real)
+    Nx = size(p, 1)
+    Ny = size(p, 2)
+    
+    # Right-hand side: rho/dt * (du_star/dx + dv_star/dy)
+    rhs = zeros(Float64, Nx, Ny)
+    
+    for j in 1:Ny
+        for i in 1:Nx
+            du_star_dx = (u_star[i + 1, j] - u_star[i, j]) / dx
+            dv_star_dy = (v_star[i, j + 1] - v_star[i, j]) / dy
+            rhs[i, j] = rho[i, j] / dt * (du_star_dx + dv_star_dy)
+        end
+    end
+    
+    # Solve Laplacian equation: ∇²p = rhs using iterative method (Jacobi iteration)
+    p_new = copy(float.(p))
+    
+    for iter in 1:100  # Fixed number of iterations
+        for j in 2:Ny-1
+            for i in 2:Nx-1
+                p_new[i, j] = 0.25 * (
+                    p_new[i+1, j] + p_new[i-1, j] +
+                    p_new[i, j+1] + p_new[i, j-1] -
+                    dx * dy * rhs[i, j]
+                )
+            end
+        end
+    end
+    
+    return p_new
 end
 
-# Example usage:
-plot_velocity_field(u, v, dx, dy)
+
+function projection_step(u_star::AbstractMatrix, v_star::AbstractMatrix, p::AbstractMatrix, rho::AbstractMatrix, dx::Real, dy::Real, dt::Real)
+    Nx = size(p, 1)
+    Ny = size(p, 2)
+    
+    u_new = copy(float.(u_star))
+    v_new = copy(float.(v_star))
+    
+    # u-component: u^{n+1} = u_star - (dt/rho) * ∂p/∂x
+    for j in 1:Ny
+        for i in 2:Nx
+            dp_dx = (p[i, j] - p[i-1, j]) / dx
+            u_new[i, j] = u_star[i, j] - (dt / rho[i, j]) * dp_dx
+        end
+    end
+    
+    # v-component: v^{n+1} = v_star - (dt/rho) * ∂p/∂y
+    for j in 2:Ny
+        for i in 1:Nx
+            dp_dy = (p[i, j] - p[i, j-1]) / dy
+            v_new[i, j] = v_star[i, j] - (dt / rho[i, j]) * dp_dy
+        end
+    end
+    
+    return u_new, v_new
+end
+
