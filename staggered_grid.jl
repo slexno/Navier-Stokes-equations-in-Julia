@@ -12,7 +12,7 @@ using Plots
 
 Nx, Ny = 5,5
 dx, dy = 0.01, 0.1
-dt =0.0001
+dt =0.00001
 
 p = zeros(Nx, Ny)
 u = zeros(Nx + 1, Ny)
@@ -106,18 +106,6 @@ end
 
 flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v, dx, dy, nu)
 
-# Plot contourf
-p = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
-             title="Diffusive Flux (u-x direction)", color=:viridis)
-
-savefig(p, "diffusive_flux_contour.png")
-@info "Figure saved → diffusive_flux_contour.png"
-
-contourf(flux_diff_u_y', xlabel="x", ylabel="y",
-         title="Diffusive Flux (u-y direction)", color=:viridis)
-
-
-
 
 # ================================
 # Time evolution of diffusive flux
@@ -153,7 +141,7 @@ end
 
 
 gif(anim,
-    "diffusive_flux_time.gif",
+    "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_time.gif",
     fps=30)
 
 @info "Animation saved → diffusive_flux_time.gif"
@@ -225,27 +213,6 @@ flux_conv_x_u, flux_conv_y_u, flux_conv_x_v, flux_conv_y_v = convective_flux(u, 
 # Plot contourf
 p = contourf(flux_conv_x_u', xlabel="x", ylabel="y",
              title="Convective Flux (u-x direction)", color=:viridis)
-
-savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\convective_flux_u_x_contour.png")
-@info "Figure saved → convective_flux_u_x_contour.png"
-
-contourf(flux_conv_y_u', xlabel="x", ylabel="y",
-         title="Convective Flux (u-y direction)", color=:viridis)
-
-savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\convective_flux_u_y_contour.png")
-@info "Figure saved → convective_flux_u_y_contour.png"
-
-contourf(flux_conv_x_v', xlabel="x", ylabel="y",
-         title="Convective Flux (v-x direction)", color=:viridis)
-
-savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\convective_flux_v_x_contour.png")
-@info "Figure saved → convective_flux_v_x_contour.png"
-
-contourf(flux_conv_y_v', xlabel="x", ylabel="y",
-         title="Convective Flux (v-y direction)", color=:viridis)
-
-savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\convective_flux_v_y_contour.png")
-@info "Figure saved → convective_flux_v_y_contour.png"
 
 
 
