@@ -111,7 +111,7 @@ flux_diff_u_x, flux_diff_u_y, flux_diff_v_x, flux_diff_v_y = diffusive_flux(u, v
 p = contourf(flux_diff_u_x', xlabel="x", ylabel="y",
              title="Diffusive Flux (u-x direction)", color=:viridis)
 
-savefig(p, "diffusive_flux_contour.png")
+savefig(p, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_contour.png")
 @info "Figure saved → diffusive_flux_contour.png"
 
 contourf(flux_diff_u_y', xlabel="x", ylabel="y",
@@ -135,7 +135,7 @@ first_flux_diff_u_x, first_flux_diff_u_y, first_flux_diff_v_x, first_flux_diff_v
 
 p_first = contourf(first_flux_diff_u_x', xlabel="x", ylabel="y",
                    title="Diffusive Flux u-x (iteration 1)", color=:viridis)
-savefig(p_first, "diffusive_flux_iteration1.png")
+savefig(p_first, "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_iteration1.png")
 @info "Figure saved → diffusive_flux_iteration1.png"
 
 
@@ -166,7 +166,7 @@ end
 
 
 gif(anim,
-    "diffusive_flux_time.gif",
+    "C:\\Users\\bello\\Documents\\ecole\\Aero_4\\semestre_2\\Julia\\diffusive_flux_time.gif",
     fps=30)
 
 @info "Animation saved → diffusive_flux_time.gif"
