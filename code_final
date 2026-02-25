@@ -24,7 +24,7 @@ function cavity_solver()
     Ny  = Nx
     CFL = 0.5
     F = 0.5
-    Niter = 25000       # [iteration] Total number of iteration
+    Niter = 2500       # [iteration] Total number of iteration
     N_out = 25         # [iteration] Output frequency
 
     # ----------------------------
@@ -107,8 +107,8 @@ function interp_center!(ux_c,uy_c, ux,uy)
 
     @inbounds for i in 1:Nx
         for j in 1:Ny
-            ux_c[i,j] = blank
-            uy_c[i,j] = blank
+            ux_c[i,j] = 
+            uy_c[i,j] = 
         end
     end
 
@@ -265,25 +265,25 @@ function convective_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy)
             Ue = blank        # East normal velocity
             Uw = blank         # West normal velocity
             Vn = blank         # North normal velocity
-            Vs = blank     # South normal velocity
+            Vs = blank          # South normal velocity
 
             # ============
             # 2) Convective flux (Upwind Scheme)
             # ============
 
-            uE = (Ue ≥ 0) ? blank : blank     # East (No BC)
-            uW = (Uw ≥ 0) ? blank : blank     # West (No BC)
+            uE = (Ue ≥ 0) ? ux[i, j] : ux[i+1, j]     # East (No BC)
+            uW = (Uw ≥ 0) ? ux[i-1, j] : ux[i, j]     # West (No BC)
             
             if j != Ny
-                uN = (Vn ≥ 0) ? blank   : blank  # North
+                uN = (Vn ≥ 0) ? ux[i, j] : ux[i, j+1]  # North
             else
-                uN = (Vn ≥ 0) ? blank   : blank  # North BC
+                uN = (Vn ≥ 0) ? ux[i, j] : ux_top  # North BC
             end
 
             if j != 1
-                uS = (Vs ≥ 0) ? blank : blank  # South
+                uS = (Vs ≥ 0) ? ux[i, j-1] : ux[i, j]  # South
             else
-                uS = (Vs ≥ 0) ? blank : blank  # South BC
+                uS = (Vs ≥ 0) ? ux_bottom : ux[i, j]  # South BC
             end
 
             # ============
@@ -373,18 +373,18 @@ function diffusive_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy, nu)
             # ============
             
             if j == 1               # South BC
-                grad_ux_N = blank
-                grad_ux_S = blank
+                grad_ux_N = (ux_top - ux[i, j]) / (2*dy)
+                grad_ux_S = (ux[i, j + 1] - ux[i, j]) / dy
             elseif j == Ny          # North BC
-                grad_ux_N = blank
-                grad_ux_S = blank
+                grad_ux_N = (ux[i, j - 1] - ux[i, j]) / dy
+                grad_ux_S = (ux_bottom) - ux[i, j]) / (2*dy)
             else                    # internal faces
-                grad_ux_N = blank
-                grad_ux_S = blank
+                grad_ux_N = (ux[i, j + 1] - ux[i, j]) / dy
+                grad_ux_S = (ux[i, j - 1] - ux[i, j]) / dy
             end
                                     # internal faces
-            grad_ux_E = blank
-            grad_ux_W = blank
+            grad_ux_E = (ux[i + 1, j] - ux[i, j]) / dx
+            grad_ux_W = (ux[i - 1, j] - ux[i, j]) / dx
 
 
 
@@ -412,18 +412,18 @@ function diffusive_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy, nu)
             # ============
 
             if i == 1               # West BC
-                grad_uy_E = blank
-                grad_uy_W = blank
+                grad_uy_E = (uy_left - uy[i, j]) / (2*dx)
+                grad_uy_W = (uy[i + 1, j] - uy[i, j]) / (2*dx)
             elseif i == Nx          # East BC
-                grad_uy_E = blank
-                grad_uy_W = blank
+                grad_uy_E = (uy[i, j] - uy[i, j]) / dx
+                grad_uy_W = (uy[i - 1, j] - uy[i, j]) / dx
             else                    # internal faces
-                grad_uy_E = blank
-                grad_uy_W = blank
+                grad_uy_E = (uy[i + 1, j] - uy[i, j]) / dx
+                grad_uy_W = (uy[i - 1, j] - uy[i, j]) / dx
             end
                                     # internal faces
-            grad_uy_N = blank
-            grad_uy_S = blank
+            grad_uy_N = (uy[i, j + 1] - uy[i, j]) / dy
+            grad_uy_S = (uy[i, j - 1] - uy[i, j]) / dy
 
 
             # ============
