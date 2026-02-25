@@ -24,7 +24,7 @@ function cavity_solver()
     Ny  = Nx
     CFL = 0.5
     F = 0.5
-    Niter = 2500       # [iteration] Total number of iteration
+    Niter = 2500      # [iteration] Total number of iteration
     N_out = 25         # [iteration] Output frequency
 
     # ----------------------------
@@ -73,6 +73,9 @@ function cavity_solver()
     #------------------
     T_tot = 0.0
     
+    anim_pred = Animation()
+    anim_press = Animation()
+    anim_corr = Animation()
     for it in 1:Niter # <--- Start of the temporal loop
 
         dt = compute_dt(ux, uy, dx, dy, nu; CFL=0.5,F=0.5)
@@ -91,12 +94,30 @@ function cavity_solver()
         end
 
         prediction_step!(ux_star, uy_star, ux,uy, Flux_ux, Flux_uy, Nx, Ny, dx, dy, dt, nu)
+        if it%N_out == 0
+            interp_center!(ux_c,uy_c, ux_star,uy_star)
+            u_mag_pred = (ux_c.^2 + uy_c.^2).^0.5
+            p_pred = contourf(x_center, y_center, u_mag_pred', xlabel="x", ylabel="y", title="Prediction step velocity magnitude (it=$it)", color=:jet)
+            frame(anim_pred, p_pred)
+        end
 
         compute_pressure!(B, div_u, p, A, ux_star, uy_star, Nx, Ny, dx, dy, dt, rho)
         
+        if it%N_out == 0
+            p_press = contourf(x_center, y_center, p', xlabel="x", ylabel="y", title="Pressure field after pressure solve (it=$it)", color=:balance)
+            frame(anim_press, p_press)
+        end
         correction_step!(ux,uy,p,ux_star, uy_star, Nx, Ny, dx,dy,dt, rho)
-
+        if it%N_out == 0
+            interp_center!(ux_c,uy_c, ux,uy)
+            u_mag_corr = (ux_c.^2 + uy_c.^2).^0.5
+            p_corr = contourf(x_center, y_center, u_mag_corr', xlabel="x", ylabel="y", title="Correction step velocity magnitude (it=$it)", color=:jet)
+            frame(anim_corr, p_corr)
+        end
     end # <--- End of the temporal loop
+    gif(anim_pred, "prediction_step.gif", fps=8)
+    gif(anim_press, "pressure_step.gif", fps=8)
+    gif(anim_corr, "correction_step.gif", fps=8)
 
 end
 
@@ -107,8 +128,8 @@ function interp_center!(ux_c,uy_c, ux,uy)
 
     @inbounds for i in 1:Nx
         for j in 1:Ny
-            ux_c[i,j] = 
-            uy_c[i,j] = 
+            ux_c[i,j] = 0.5 * (ux[i, j] + ux[i+1, j])
+            uy_c[i,j] = 0.5 * (uy[i, j] + uy[i, j+1])
         end
     end
 
@@ -262,10 +283,10 @@ function convective_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy)
             # 1) Normal velocity
             # ==================
             
-            Ue = blank        # East normal velocity
-            Uw = blank         # West normal velocity
-            Vn = blank         # North normal velocity
-            Vs = blank          # South normal velocity
+            Ue = 0.5 * (ux[i, j] + ux[i+1, j])              # East normal velocity
+            Uw = 0.5 * (ux[i-1, j] + ux[i, j])              # West normal velocity
+            Vn = 0.5 * (uy[i-1, j+1] + uy[i, j+1])          # North normal velocity
+            Vs = 0.5 * (uy[i-1, j] + uy[i, j])              # South normal velocity
 
             # ============
             # 2) Convective flux (Upwind Scheme)
@@ -310,28 +331,28 @@ function convective_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy)
             # ==================
             # 1) Normal velocity
             # ==================
-            Ue = blank     # East normal velocity
-            Uw = blank         # West normal velocity
-            Vn = blank         # North normal velocity
-            Vs = blank         # South normal velocity
+            Ue = 0.5 * (ux[i+1, j] + ux[i+1, j-1])              # East normal velocity
+            Uw = 0.5 * (ux[i, j - 1] + ux[i, j])              # West normal velocity
+            Vn = 0.5 * (uy[i, j] + uy[i, j+1])          # North normal velocity
+            Vs = 0.5 * (uy[i, j-1] + uy[i, j])              # South normal velocity
 
             # ============
             # 2) Convective flux (Upwind Scheme)
             # ============
 
-            uN = (Vn ≥ 0) ? blank : blank  # North (No BC)
-            uS = (Vs ≥ 0) ? blank : blank  # South (No BC)
+            uN = (Vn ≥ 0) ? uy[i, j] : uy[i, j + 1]  # North (No BC)
+            uS = (Vs ≥ 0) ? uy[i, j - 1] : uy[i, j]  # South (No BC)
 
             if i != Nx
-                uE = (Ue ≥ 0) ? blank : blank  # East 
+                uE = (Ue ≥ 0) ? uy[i, j] : uy[i+1, j]  # East 
             else
-                uE = (Ue ≥ 0) ? blank : blank  # East BC
+                uE = (Ue ≥ 0) ? uy[i, j] : uy_right  # East BC
             end
 
             if i != 1
-                uW = (Uw ≥ 0) ? blank : blank  # West
+                uW = (Uw ≥ 0) ? uy[i-1, j] : uy[i, j]  # West
             else
-                uW = (Uw ≥ 0) ? blank : blank  # West BC
+                uW = (Uw ≥ 0) ?  uy_left : uy[i, j] # West BC
             end
 
 
@@ -373,11 +394,11 @@ function diffusive_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy, nu)
             # ============
             
             if j == 1               # South BC
-                grad_ux_N = (ux_top - ux[i, j]) / (2*dy)
-                grad_ux_S = (ux[i, j + 1] - ux[i, j]) / dy
+                grad_ux_N = (ux[i, j+1]- ux[i, j]) / (dy)
+                grad_ux_S = 2*((ux[i, j]) - (ux_bottom)) / dy
             elseif j == Ny          # North BC
-                grad_ux_N = (ux[i, j - 1] - ux[i, j]) / dy
-                grad_ux_S = (ux_bottom) - ux[i, j]) / (2*dy)
+                grad_ux_N = 2* (ux_top - ux[i, j]) / dy
+                grad_ux_S = (ux[i, j - 1] - ux[i, j]) / dy
             else                    # internal faces
                 grad_ux_N = (ux[i, j + 1] - ux[i, j]) / dy
                 grad_ux_S = (ux[i, j - 1] - ux[i, j]) / dy
@@ -412,10 +433,10 @@ function diffusive_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy, nu)
             # ============
 
             if i == 1               # West BC
-                grad_uy_E = (uy_left - uy[i, j]) / (2*dx)
-                grad_uy_W = (uy[i + 1, j] - uy[i, j]) / (2*dx)
+                grad_uy_E = (uy[i + 1, j] - uy[i, j]) / dx
+                grad_uy_W = 2*(uy[i, j] - uy_left) / dx
             elseif i == Nx          # East BC
-                grad_uy_E = (uy[i, j] - uy[i, j]) / dx
+                grad_uy_E = 2*(uy_right - uy[i, j]) / dx
                 grad_uy_W = (uy[i - 1, j] - uy[i, j]) / dx
             else                    # internal faces
                 grad_uy_E = (uy[i + 1, j] - uy[i, j]) / dx
@@ -471,7 +492,7 @@ end
 function compute_div!(div_u, ux, uy, Nx, Ny, dx,dy)
     @inbounds for i in 1:Nx
         for j in 1:Ny
-            div_u[i,j] = blank # pressure-cell centered
+            div_u[i,j] = (ux[i+1, j] - ux[i, j]) / dx + (uy[i, j+1] - uy[i, j]) / dy # pressure-cell centered
 
         end
     end
@@ -538,18 +559,19 @@ function correction_step!(ux,uy,p,ux_star, uy_star, Nx, Ny, dx,dy,dt, rho)
     # --- Velocity correction ---
     @inbounds for i in 2:Nx
         for j in 1:Ny
-            grad_p = blank
+            grad_p = (p[i, j] - p[i-1, j]) / dx
             ux[i,j] = ux_star[i,j] - dt/rho * grad_p
         end
     end
 
     @inbounds for i in 1:Nx
         for j in 2:Ny
-            grad_p = blank
+            grad_p = (p[i, j] - p[i, j-1]) / dy
             uy[i,j] = uy_star[i,j] - dt/rho * grad_p
         end
     end
 
 end
+
 
 cavity_solver()
