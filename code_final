@@ -1,0 +1,577 @@
+using Plots
+Plots.default(show = true)  # allow external window
+
+using LinearAlgebra
+using SparseArrays
+
+function cavity_solver()
+
+    # ----------------------------
+    #       USER PARAMETERS
+    # ----------------------------
+
+    global blank = 0.0      #Fill all blanks in the code !!!
+
+    # --- Physical parameters ---
+    Lx = 1.0         # [m]
+    Ly = 1.0         # [m]
+    rho = 1000        # [kg/m^3]
+    nu  = 1.e-3     # [m^2/s]
+    # T_end = 1000   # [s] Physical end time
+
+    # --- Numerical parameters ---
+    Nx  = 50
+    Ny  = Nx
+    CFL = 0.5
+    F = 0.5
+    Niter = 2500      # [iteration] Total number of iteration
+    N_out = 25         # [iteration] Output frequency
+
+    # ----------------------------
+    #       CAVITY SOLVER
+    # ----------------------------
+
+    # --- Mesh discretization ---
+    dx = Lx/Nx
+    dy = Ly/Ny
+
+    x_node = collect(range(0.0, stop=Lx, length=Nx+1))
+    y_node = collect(range(0.0, stop=Ly, length=Ny+1))
+    
+    x_center = zeros(Nx) # Nodes x-location
+    y_center = zeros(Ny) # Nodes y-location
+
+    # Cells center x-location
+    for i in 1:Nx
+        x_center[i] = (x_node[i]+x_node[i+1])/2
+    end 
+    # Cells center y-location
+    for j in 1:Ny
+        y_center[j] = (y_node[j]+y_node[j+1])/2
+    end
+
+    # --- Staggered meshes ---
+    # Note : You can also use fill(value, Nx, Ny) 
+    ux   = zeros(Nx+1, Ny)      # At ux-cell center
+    uy   = zeros(Nx, Ny+1)      # At uy-cell center
+    ux_c = zeros(Nx, Ny)      # At pressure cell center
+    uy_c = zeros(Nx, Ny)      # At pressure cell center
+    p    = zeros(Nx, Ny)      # At pressure cell center
+    div_u = zeros(Nx, Ny)     # At pressure cell center
+    Flux_ux = zeros(Nx+1, Ny)      # At ux-cell center
+    Flux_uy = zeros(Nx, Ny+1)      # At uy-cell center
+    ux_star   = zeros(Nx+1, Ny)      # At ux-cell center
+    uy_star   = zeros(Nx, Ny+1)      # At uy-cell center
+    
+    # --- Laplacian discretization ---
+    # A = laplacian_matrix(Nx,Ny,dx,dy)
+    A = laplacian_factor(Nx, Ny, dx, dy)
+    B = zeros(Nx*Ny) # For RHS of Poisson equation
+
+    #------------------
+    # --- Time loop ---
+    #------------------
+    T_tot = 0.0
+    
+    anim_pred = Animation()
+    anim_press = Animation()
+    anim_corr = Animation()
+    for it in 1:Niter # <--- Start of the temporal loop
+
+        dt = compute_dt(ux, uy, dx, dy, nu; CFL=0.5,F=0.5)
+
+        # Output listing
+        if it%N_out == 0
+            println("Time integration, iteration # $it, with dt = $dt : T_tot = $T_tot")
+
+            interp_center!(ux_c,uy_c, ux,uy)
+            u_mag = (ux_c.^2 + uy_c.^2).^0.5
+
+            # println(size(u_mag), size(xc), size(yc))
+            contourf(x_center, y_center, u_mag', xlabel="x", ylabel="y",
+            title="Velocity magnitude", color=:jet)
+
+        end
+
+        prediction_step!(ux_star, uy_star, ux,uy, Flux_ux, Flux_uy, Nx, Ny, dx, dy, dt, nu)
+        if it%N_out == 0
+            interp_center!(ux_c,uy_c, ux_star,uy_star)
+            u_mag_pred = (ux_c.^2 + uy_c.^2).^0.5
+            p_pred = contourf(x_center, y_center, u_mag_pred', xlabel="x", ylabel="y", title="Prediction step velocity magnitude (it=$it)", color=:jet)
+            frame(anim_pred, p_pred)
+        end
+
+        compute_pressure!(B, div_u, p, A, ux_star, uy_star, Nx, Ny, dx, dy, dt, rho)
+        
+        if it%N_out == 0
+            p_press = contourf(x_center, y_center, p', xlabel="x", ylabel="y", title="Pressure field after pressure solve (it=$it)", color=:balance)
+            frame(anim_press, p_press)
+        end
+        correction_step!(ux,uy,p,ux_star, uy_star, Nx, Ny, dx,dy,dt, rho)
+        if it%N_out == 0
+            interp_center!(ux_c,uy_c, ux,uy)
+            u_mag_corr = (ux_c.^2 + uy_c.^2).^0.5
+            p_corr = contourf(x_center, y_center, u_mag_corr', xlabel="x", ylabel="y", title="Correction step velocity magnitude (it=$it)", color=:jet)
+            frame(anim_corr, p_corr)
+        end
+    end # <--- End of the temporal loop
+    gif(anim_pred, "prediction_step.gif", fps=8)
+    gif(anim_press, "pressure_step.gif", fps=8)
+    gif(anim_corr, "correction_step.gif", fps=8)
+
+end
+
+# Interpolate values on the pressure-cell centered grid
+function interp_center!(ux_c,uy_c, ux,uy)
+
+    Nx,Ny = size(ux_c)
+
+    @inbounds for i in 1:Nx
+        for j in 1:Ny
+            ux_c[i,j] = 0.5 * (ux[i, j] + ux[i+1, j])
+            uy_c[i,j] = 0.5 * (uy[i, j] + uy[i, j+1])
+        end
+    end
+
+end
+
+
+function laplacian_matrix(Nx,Ny,dx,dy)
+
+    #Define A
+    A = zeros(Nx*Ny, Nx*Ny)
+
+    # index (i,j) -> k
+    k(i,j) = i + (j-1)*Nx
+
+    # 5 points laplacian operator
+    @inbounds for i in 1:Nx, j in 1:Ny
+        A[k(i,j), k(i,j)] = -2/dx^2 - 2/dy^2
+        if i > 1
+            A[k(i-1,j), k(i,j)] = 1/dx^2
+        end
+        if i < Nx
+            A[k(i+1,j), k(i,j)] = 1/dx^2
+        end
+        if j > 1
+            A[k(i,j-1), k(i,j)] = 1/dy^2
+        end
+        if j < Ny
+            A[k(i,j+1), k(i,j)] = 1/dy^2
+        end
+    end
+
+    # Boundary Conditions for Pressure (dp/dn = 0)
+    for j in 1:Ny
+        A[k(1,j), k(1,j)] += 1/dx^2     # Left Wall
+    end
+    for j in 1:Ny
+        A[k(Nx,j), k(Nx,j)] += 1/dx^2   # Right Wall
+    end
+    for i in 1:Nx
+        A[k(i,1), k(i,1)] += 1/dy^2     # Bottom Wall
+    end
+    for i in 1:Nx
+        A[k(i,Ny), k(i,Ny)] += 1/dy^2     # Top Wall
+    end
+
+    # # Pin pressure on the lower left corner (reference pressure)
+    A[k(1,1), :] .= 0.0
+    A[:, k(1,1)] .= 0.0
+    A[k(1,1), k(1,1)] = 1.0
+
+    return A
+end
+
+
+function laplacian_factor(Nx, Ny, dx, dy)
+    N = Nx * Ny
+    A = zeros(N, N)
+
+    k(i, j) = i + (j - 1) * Nx
+    cx = 1.0 / dx^2
+    cy = 1.0 / dy^2
+
+    # Assemble L ≈ -∇² with homogeneous Neumann via "missing neighbor" rule
+    @inbounds for j in 1:Ny, i in 1:Nx
+        row = k(i, j)
+        diag = 0.0
+
+        if i > 1
+            col = k(i - 1, j)
+            A[row, col] = -cx
+            A[col, row] = -cx  # keep symmetry explicit (dense build)
+            diag += cx
+        end
+        if i < Nx
+            col = k(i + 1, j)
+            A[row, col] = -cx
+            A[col, row] = -cx
+            diag += cx
+        end
+        if j > 1
+            col = k(i, j - 1)
+            A[row, col] = -cy
+            A[col, row] = -cy
+            diag += cy
+        end
+        if j < Ny
+            col = k(i, j + 1)
+            A[row, col] = -cy
+            A[col, row] = -cy
+            diag += cy
+        end
+
+        A[row, row] = diag  # positive diagonal
+    end
+
+    # Pin one pressure node (e.g., lower-left)
+    ref = k(1, 1)
+    A[ref, :] .= 0.0
+    A[:, ref] .= 0.0
+    A[ref, ref] = 1.0
+
+    return cholesky(Symmetric(A))  # SPD factorization
+end
+
+
+function compute_dt(u, v, dx, dy, nu; CFL=0.5,F=0.5)
+
+    umax = maximum(abs.(u))
+    vmax = maximum(abs.(v))
+
+    # --- Convective CFL constraint ---
+
+    # Compute x constraint
+    if umax > 0
+        dt_conv_x = CFL * dx / umax
+    else
+        dt_conv_x = 1.0e6
+    end
+    # Compute y constraint
+    if vmax > 0
+        dt_conv_y = CFL * dy / vmax
+    else
+        dt_conv_y = 1.0e6
+    end
+
+    # --- Diffusive Fourier constraint ---
+    dt_diff = F / ( 2*nu*(1/dx^2 + 1/dy^2) )
+
+    # --- Final constraint ---
+    return min(dt_conv_x, dt_conv_y, dt_diff)
+end
+
+
+function convective_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy)
+
+
+    #Boundary conditions : 
+    ux_top = 1.0
+    ux_bottom = 0.0
+    uy_left = 0.0
+    uy_right = 0.0
+
+    #==========================================================#
+    #                    Compute ux fluxes                     #
+    #                   (BC are not updated)                   #
+    #==========================================================#
+    @inbounds for i in 2:Nx
+        for j in 1:Ny
+
+            # ==================
+            # 1) Normal velocity
+            # ==================
+            
+            Ue = 0.5 * (ux[i, j] + ux[i+1, j])              # East normal velocity
+            Uw = 0.5 * (ux[i-1, j] + ux[i, j])              # West normal velocity
+            Vn = 0.5 * (uy[i-1, j+1] + uy[i, j+1])          # North normal velocity
+            Vs = 0.5 * (uy[i-1, j] + uy[i, j])              # South normal velocity
+
+            # ============
+            # 2) Convective flux (Upwind Scheme)
+            # ============
+
+            uE = (Ue ≥ 0) ? ux[i, j] : ux[i+1, j]     # East (No BC)
+            uW = (Uw ≥ 0) ? ux[i-1, j] : ux[i, j]     # West (No BC)
+            
+            if j != Ny
+                uN = (Vn ≥ 0) ? ux[i, j] : ux[i, j+1]  # North
+            else
+                uN = (Vn ≥ 0) ? ux[i, j] : ux_top  # North BC
+            end
+
+            if j != 1
+                uS = (Vs ≥ 0) ? ux[i, j-1] : ux[i, j]  # South
+            else
+                uS = (Vs ≥ 0) ? ux_bottom : ux[i, j]  # South BC
+            end
+
+            # ============
+            # 3) Integration of the fluxes over the 4 faces
+            # ============
+
+            FE = uE * Ue * dy
+            FW = uW * Uw * dy
+            FN = uN * Vn * dx
+            FS = uS * Vs * dx
+
+            Flux_ux[i,j] = Flux_ux[i,j] - (FN - FS + FE - FW)
+
+        end 
+    end
+    
+    #==========================================================#
+    #                     Compute uy fluxes                    #
+    #                   (BC are not updated)                   #
+    #==========================================================#
+    @inbounds for i in 1:Nx
+        for j in 2:Ny
+
+            # ==================
+            # 1) Normal velocity
+            # ==================
+            Ue = 0.5 * (ux[i+1, j] + ux[i+1, j-1])              # East normal velocity
+            Uw = 0.5 * (ux[i, j - 1] + ux[i, j])              # West normal velocity
+            Vn = 0.5 * (uy[i, j] + uy[i, j+1])          # North normal velocity
+            Vs = 0.5 * (uy[i, j-1] + uy[i, j])              # South normal velocity
+
+            # ============
+            # 2) Convective flux (Upwind Scheme)
+            # ============
+
+            uN = (Vn ≥ 0) ? uy[i, j] : uy[i, j + 1]  # North (No BC)
+            uS = (Vs ≥ 0) ? uy[i, j - 1] : uy[i, j]  # South (No BC)
+
+            if i != Nx
+                uE = (Ue ≥ 0) ? uy[i, j] : uy[i+1, j]  # East 
+            else
+                uE = (Ue ≥ 0) ? uy[i, j] : uy_right  # East BC
+            end
+
+            if i != 1
+                uW = (Uw ≥ 0) ? uy[i-1, j] : uy[i, j]  # West
+            else
+                uW = (Uw ≥ 0) ?  uy_left : uy[i, j] # West BC
+            end
+
+
+            # ============
+            # 3) Integration of the fluxes over the 4 faces
+            # ============
+
+            FE = uE * Ue * dy
+            FW = uW * Uw * dy
+            FN = uN * Vn * dx
+            FS = uS * Vs * dx
+
+            Flux_uy[i,j] = Flux_uy[i,j] - (FN - FS + FE - FW) 
+
+        end 
+    end
+        
+end
+
+
+function diffusive_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy, nu)
+
+    #==========================================================#
+    #                  Compute ux and uy flux                  #
+    #                   (BC are not updated)                   #
+    #==========================================================#
+
+    #Boundary conditions : 
+    ux_top = 1.0
+    ux_bottom = 0.0
+    uy_left = 0.0
+    uy_right = 0.0
+
+    @inbounds for i in 2:Nx
+        for j in 1:Ny
+
+            # ============
+            # A.1) ux gradient computation
+            # ============
+            
+            if j == 1               # South BC
+                grad_ux_N = (ux[i, j+1]- ux[i, j]) / (dy)
+                grad_ux_S = 2*((ux[i, j]) - (ux_bottom)) / dy
+            elseif j == Ny          # North BC
+                grad_ux_N = 2* (ux_top - ux[i, j]) / dy
+                grad_ux_S = (ux[i, j - 1] - ux[i, j]) / dy
+            else                    # internal faces
+                grad_ux_N = (ux[i, j + 1] - ux[i, j]) / dy
+                grad_ux_S = (ux[i, j - 1] - ux[i, j]) / dy
+            end
+                                    # internal faces
+            grad_ux_E = (ux[i + 1, j] - ux[i, j]) / dx
+            grad_ux_W = (ux[i - 1, j] - ux[i, j]) / dx
+
+
+
+
+            # ============
+            # A.2) ux flux integration over the 4 faces
+            # ============
+
+            FE =  nu * grad_ux_E * dy
+            FW =  nu * grad_ux_W * dy
+
+            FN =  nu * grad_ux_N * dx
+            FS =  nu * grad_ux_S * dx
+
+            Flux_ux[i,j] = Flux_ux[i,j] + FN - FS + FE - FW
+        end
+    end
+            # -------------------------------------------------------
+
+    @inbounds for i in 1:Nx
+        for j in 2:Ny
+
+            # ============
+            # B.1) uy gradient computation
+            # ============
+
+            if i == 1               # West BC
+                grad_uy_E = (uy[i + 1, j] - uy[i, j]) / dx
+                grad_uy_W = 2*(uy[i, j] - uy_left) / dx
+            elseif i == Nx          # East BC
+                grad_uy_E = 2*(uy_right - uy[i, j]) / dx
+                grad_uy_W = (uy[i - 1, j] - uy[i, j]) / dx
+            else                    # internal faces
+                grad_uy_E = (uy[i + 1, j] - uy[i, j]) / dx
+                grad_uy_W = (uy[i - 1, j] - uy[i, j]) / dx
+            end
+                                    # internal faces
+            grad_uy_N = (uy[i, j + 1] - uy[i, j]) / dy
+            grad_uy_S = (uy[i, j - 1] - uy[i, j]) / dy
+
+
+            # ============
+            # B.2) uy flux integration over the 4 faces
+            # ============
+
+            FE =  nu * grad_uy_E * dy
+            FW =  nu * grad_uy_W * dy
+
+            FN =  nu * grad_uy_N * dx
+            FS =  nu * grad_uy_S * dx
+
+            Flux_uy[i,j] = Flux_uy[i,j] + FN - FS + FE - FW
+
+
+        end
+    end
+
+end
+
+function prediction_step!(ux_star, uy_star, ux,uy, Flux_ux, Flux_uy, Nx, Ny, dx, dy, dt, nu)
+
+        # ------------------------
+        # 1) Flux computation ----
+
+        # --- Remove old fluxes
+        Flux_ux .= 0.0
+        Flux_uy .= 0.0
+
+        # --- Compute convective flux ---
+        convective_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy)
+
+        # --- Compute diffusive flux ---
+        diffusive_flux!(Flux_ux,Flux_uy, ux,uy, Nx, Ny, dx, dy, nu)
+
+
+        # ------------------------
+        # 2) Time integration ----
+        ux_star[:,:] .= ux[:,:] + dt * ( Flux_ux[:,:]/(dx*dy) )
+        uy_star[:,:] .= uy[:,:] + dt * ( Flux_uy[:,:]/(dx*dy) )
+
+
+end
+
+function compute_div!(div_u, ux, uy, Nx, Ny, dx,dy)
+    @inbounds for i in 1:Nx
+        for j in 1:Ny
+            div_u[i,j] = (ux[i+1, j] - ux[i, j]) / dx + (uy[i, j+1] - uy[i, j]) / dy # pressure-cell centered
+
+        end
+    end
+end
+
+function compute_rhs!(B, div_u, p,  Nx,Ny, dx, dy, dt, rho)
+    
+    B .= 0.0 # Erase previous RHS values
+
+    k(i,j) = i + (j-1)*Nx # index function
+
+    @inbounds for i in 1:Nx
+        for j in 1:Ny
+            B[k(i,j)] = rho/dt * div_u[i, j]
+        end
+    end
+
+    B[k(1,1)] = 0.0 # Pin pressure at 0 on the lower left corner
+
+end
+
+
+function compute_rhs_cholesky!(B, div_u, p,  Nx,Ny, dx, dy, dt, rho)
+    
+    B .= 0.0 # Erase previous RHS values
+
+    k(i,j) = i + (j-1)*Nx # index function
+
+    @inbounds for i in 1:Nx
+        for j in 1:Ny
+            B[k(i,j)] = -rho/dt * div_u[i, j]
+        end
+    end
+
+    B[k(1,1)] = 0.0 # Pin pressure at 0 on the lower left corner
+
+end
+
+function compute_pressure!(B, div_u, p, A, ux_star, uy_star, Nx, Ny, dx, dy, dt, rho)
+
+    compute_div!(div_u, ux_star, uy_star,Nx, Ny, dx,dy)
+
+    # compute_rhs!(B, div_u, p, Nx,Ny, dx, dy, dt, rho)
+    compute_rhs_cholesky!(B, div_u, p, Nx,Ny, dx, dy, dt, rho)
+
+    # --- Solving  A p_col =  B ---
+    p_col = A \ B
+
+    # --- Filling the 2D field ---
+
+    # index (i,j) -> k
+    k(i,j) = i + (j-1)*Nx
+
+    @inbounds for i in 1:Nx
+        for j in 1:Ny
+            p[i, j] = p_col[k(i,j)]
+        end
+    end
+
+end
+
+function correction_step!(ux,uy,p,ux_star, uy_star, Nx, Ny, dx,dy,dt, rho)
+
+    # --- Velocity correction ---
+    @inbounds for i in 2:Nx
+        for j in 1:Ny
+            grad_p = (p[i, j] - p[i-1, j]) / dx
+            ux[i,j] = ux_star[i,j] - dt/rho * grad_p
+        end
+    end
+
+    @inbounds for i in 1:Nx
+        for j in 2:Ny
+            grad_p = (p[i, j] - p[i, j-1]) / dy
+            uy[i,j] = uy_star[i,j] - dt/rho * grad_p
+        end
+    end
+
+end
+
+
+cavity_solver()
